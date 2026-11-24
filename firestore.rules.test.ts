@@ -1,82 +1,60 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
 
-const rulesSource = fs.readFileSync(new URL('./firestore.rules', import.meta.url), 'utf8');
+const rulesSource = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
 const blueprint = JSON.parse(
-  fs.readFileSync(new URL('./firebase-blueprint.json', import.meta.url), 'utf8')
-);
+  fs.readFileSync(path.resolve(process.cwd(), 'firebase-blueprint.json'), 'utf8')
+) as { firestore: Record<string, unknown> };
 
-const VALID_ID_RE = /^[a-zA-Z0-9_-]+$/;
-const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-function assertDenied(condition: boolean, label: string) {
-  assert.equal(condition, false, `Expected PERMISSION_DENIED for: ${label}`);
-}
-
-test('Firestore rules include global default-deny and all 4 blueprint collections', () => {
-  assert.ok(rulesSource.includes("rules_version = '2';"));
-  assert.ok(rulesSource.includes('match /{document=**}'));
-  assert.ok(rulesSource.includes('allow read, write: if false;'));
-  for (const path of Object.keys(blueprint.firestore)) {
-    const matchLine = `match ${path}`;
-    assert.ok(rulesSource.includes(matchLine), `Missing match block for ${path}`);
+test('Firestore rules enforce global default-deny and cover all 6 blueprint collections', () => {
+  assert.match(rulesSource, /match \/\{document=\*\*\}\s*\{\s*allow read, write: if false;/);
+  const expectedCollections = [
+    '/users/{userId}',
+    '/businesses/{businessId}',
+    '/sales/{saleId}',
+    '/expenses/{expenseId}',
+    '/products/{productId}',
+    '/customers/{customerId}',
+  ];
+  for (const col of expectedCollections) {
+    assert.ok(col in blueprint.firestore, `Blueprint missing ${col}`);
+    assert.ok(rulesSource.includes(`match ${col}`), `firestore.rules missing match ${col}`);
   }
 });
 
-test('Dirty Dozen 1-4: Users PII isolation, no list, shadow keys, server timestamps', () => {
-  // 1 & 2: Users cannot be listed and get requires isOwner(userId)
-  assert.ok(rulesSource.includes('allow list: if false;'));
-  assert.ok(rulesSource.includes('allow get: if isValidId(userId) && isOwner(userId);'));
+test('Dirty Dozen 1-4: Unauthenticated block, PII isolation, no list on users/businesses, shadow-key rejection', () => {
+  assert.match(rulesSource, /match \/users\/\{userId\}[\s\S]*?allow get: if isValidId\(userId\) && isOwner\(userId\);/);
+  assert.match(rulesSource, /match \/users\/\{userId\}[\s\S]*?allow list: if false;/);
+  assert.match(rulesSource, /match \/businesses\/\{businessId\}[\s\S]*?allow get: if isValidId\(businessId\) && isOwner\(businessId\);/);
+  assert.match(rulesSource, /match \/businesses\/\{businessId\}[\s\S]*?allow list: if false;/);
+  assert.match(rulesSource, /isValidUserProfile[\s\S]*?data\.keys\(\)\.hasOnly\(/);
+  assert.match(rulesSource, /isValidBusinessProfile[\s\S]*?data\.keys\(\)\.hasOnly\(/);
+});
 
-  // 3: Shadow ghost field (isAdmin) rejected by hasOnly
-  const allowedUserKeys = Object.keys(blueprint.entities.UserProfile.properties);
-  const shadowPayloadKeys = [...allowedUserKeys, 'isAdmin'];
-  assertDenied(
-    shadowPayloadKeys.every((k) => allowedUserKeys.includes(k)),
-    'Shadow ghost field isAdmin on /users'
+test('Dirty Dozen 5-8: Server timestamps, cross-tenant spoofing, payment invariants, stockDeductedQty bounds', () => {
+  assert.match(rulesSource, /incoming\(\)\.createdAt == request\.time/);
+  assert.match(rulesSource, /incoming\(\)\.updatedAt == request\.time/);
+  assert.match(rulesSource, /isValidSale[\s\S]*?data\.userId == request\.auth\.uid/);
+  assert.match(
+    rulesSource,
+    /\(data\.paymentStatus == 'Paid' && data\.amountPaid == data\.totalAmount\)/
   );
-
-  // 4: Client-spoofed createdAt rejected by request.time check
-  assert.ok(rulesSource.includes('incoming().createdAt == request.time'));
-  assert.ok(rulesSource.includes('incoming().updatedAt == request.time'));
+  assert.match(
+    rulesSource,
+    /data\.stockDeductedQty is number && data\.stockDeductedQty >= 0 && data\.stockDeductedQty <= data\.quantity/
+  );
 });
 
-test('Dirty Dozen 5-8: Sales identity spoofing, terminal Paid lock, negative qty, ID poisoning', () => {
-  // 5: Identity spoofing blocked by data.userId == request.auth.uid
-  assert.ok(rulesSource.includes('data.userId == request.auth.uid'));
-
-  // 6: Terminal Paid lock
-  assert.ok(rulesSource.includes("existing().paymentStatus != 'Paid'"));
-
-  // 7: Negative quantity / amount rejected
-  assert.ok(rulesSource.includes('data.quantity is number && data.quantity > 0'));
-  assert.ok(rulesSource.includes('data.totalAmount is number && data.totalAmount > 0'));
-
-  // 8: Path Variable ID poisoning
-  assertDenied(VALID_ID_RE.test('bad$id!@#'), 'Invalid chars in saleId');
-  assertDenied('a'.repeat(129).length <= 128, 'Oversized >128 char saleId');
-});
-
-test('Dirty Dozen 9-12: Immutable expenses, string bounds, ownership immutability, verified email', () => {
-  // 9: Expenses immutable after creation
-  const expenseSection = rulesSource.slice(rulesSource.indexOf('match /expenses/{expenseId}'));
-  assert.ok(expenseSection.includes('allow update: if false;'));
-
-  // 10: Oversized description rejected by maxLength 240 synced with blueprint
-  const maxDesc = blueprint.entities.ExpenseRecord.properties.description.maxLength;
-  assert.equal(maxDesc, 240);
-  assert.ok(rulesSource.includes(`data.description.size() <= ${maxDesc}`));
-  assertDenied('x'.repeat(500).length <= maxDesc, '500-char expense description');
-
-  // 11: Inventory userId immutability enforced on update
-  assert.ok(rulesSource.includes('incoming().userId == existing().userId'));
-
-  // 12: Verified email enforced on writes
-  assert.ok(rulesSource.includes('request.auth.token.email_verified == true'));
-
-  // Secure list queries enforce resource.data.userId == request.auth.uid
-  assert.ok(rulesSource.includes('allow list: if isSignedIn() && resource.data.userId == request.auth.uid;'));
-  assert.ok(ISO_DATE_RE.test('2026-11-24'));
-  assertDenied(ISO_DATE_RE.test('24-11-2026'), 'Malformed date');
+test('Dirty Dozen 9-12: ID poisoning guard, ownership immutability on updates, customer bounds, verified email writes', () => {
+  assert.match(rulesSource, /function isValidId\(id\)[\s\S]*?id\.size\(\) <= 128 && id\.matches/);
+  assert.match(rulesSource, /match \/expenses\/\{expenseId\}[\s\S]*?incoming\(\)\.userId == existing\(\)\.userId/);
+  assert.match(rulesSource, /match \/products\/\{productId\}[\s\S]*?incoming\(\)\.userId == existing\(\)\.userId/);
+  assert.match(rulesSource, /match \/customers\/\{customerId\}[\s\S]*?isValidCustomer\(incoming\(\)\)/);
+  assert.match(rulesSource, /isValidCustomer[\s\S]*?data\.name\.size\(\) <= 140[\s\S]*?data\.totalSpent >= 0/);
+  assert.match(rulesSource, /function isVerifiedUser\(\)[\s\S]*?request\.auth\.token\.email_verified == true/);
+  // Ensure list rules explicitly check resource.data.userId == request.auth.uid
+  const listMatches = rulesSource.match(/allow list: if isSignedIn\(\) && resource\.data\.userId == request\.auth\.uid;/g) ?? [];
+  assert.equal(listMatches.length, 4, 'All 4 tenant collections must enforce resource.data.userId on list');
 });

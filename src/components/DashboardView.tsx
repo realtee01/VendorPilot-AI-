@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Area,
   AreaChart,
@@ -8,21 +8,36 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { ArrowRight, AlertTriangle } from 'lucide-react';
-import { NavSection, Product, SalesRange } from '../types/business';
+import { ArrowRight, AlertTriangle, Check, Download } from 'lucide-react';
+import { DashboardPeriod, NavSection, Product, SalesRange } from '../types/business';
 import { useBusiness } from '../context/BusinessContext';
 import {
   buildSalesPerformanceSeries,
+  calculateDashboardMetrics,
+  filterRecordsByPeriod,
   formatNaira,
   formatShortDate,
   getOutstandingBalance,
   getStockStatus,
+  getTopSellingProducts,
 } from '../utils/analytics';
+import {
+  buildDashboardReportCsv,
+  buildDashboardReportFilename,
+  triggerCsvDownload,
+} from '../utils/reportCsv';
 
 interface DashboardViewProps {
   onNavigate: (section: NavSection) => void;
   onQuickRestock: (product: Product) => void;
 }
+
+const PERIOD_OPTIONS: Array<{ value: DashboardPeriod; label: string }> = [
+  { value: 'daily', label: 'Daily' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'all', label: 'All Time' },
+];
 
 const RANGE_OPTIONS: Array<{ value: SalesRange; label: string }> = [
   { value: '7d', label: '7 Days' },
@@ -31,71 +46,195 @@ const RANGE_OPTIONS: Array<{ value: SalesRange; label: string }> = [
 ];
 
 export function DashboardView({ onNavigate, onQuickRestock }: DashboardViewProps) {
-  const { state, metrics, lowStockProducts, topSellingProducts } = useBusiness();
-  const [range, setRange] = useState<SalesRange>('6m');
+  const { state, lowStockProducts } = useBusiness();
+  const [period, setPeriod] = useState<DashboardPeriod>('monthly');
+  const [range, setRange] = useState<SalesRange>('30d');
+  const [downloaded, setDownloaded] = useState(false);
+  const downloadTimerRef = useRef<number | null>(null);
+  const symbol = state.settings.currencySymbol || '₦';
+
+  useEffect(() => {
+    return () => {
+      if (downloadTimerRef.current !== null) {
+        window.clearTimeout(downloadTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handlePeriodChange = (nextPeriod: DashboardPeriod) => {
+    setPeriod(nextPeriod);
+    if (nextPeriod === 'daily' || nextPeriod === 'weekly') {
+      setRange('7d');
+    } else if (nextPeriod === 'monthly') {
+      setRange('30d');
+    } else {
+      setRange('6m');
+    }
+  };
+
+  const periodData = useMemo(
+    () => filterRecordsByPeriod(state.sales, state.expenses, period),
+    [state.sales, state.expenses, period]
+  );
+
+  const periodMetrics = useMemo(
+    () => calculateDashboardMetrics(periodData.sales, periodData.expenses, state.products),
+    [periodData.sales, periodData.expenses, state.products]
+  );
+
+  const periodTopProducts = useMemo(
+    () => getTopSellingProducts(periodData.sales, 5),
+    [periodData.sales]
+  );
 
   const chartData = useMemo(
     () => buildSalesPerformanceSeries(state.sales, state.expenses, range),
     [state.sales, state.expenses, range]
   );
 
-  const recentSales = useMemo(() => state.sales.slice(0, 6), [state.sales]);
+  const recentSales = useMemo(() => periodData.sales.slice(0, 6), [periodData.sales]);
+
+  const handleDownloadReport = () => {
+    const now = new Date();
+    const csv = buildDashboardReportCsv({
+      settings: state.settings,
+      period,
+      periodLabel: periodData.periodLabel,
+      chartRange: range,
+      metrics: periodMetrics,
+      chartData,
+      topProducts: periodTopProducts,
+      sales: periodData.sales,
+      expenses: periodData.expenses,
+      lowStockProducts,
+      generatedAt: now,
+    });
+    const filename = buildDashboardReportFilename(state.settings.businessName, period, now);
+    triggerCsvDownload(csv, filename);
+
+    setDownloaded(true);
+    if (downloadTimerRef.current !== null) {
+      window.clearTimeout(downloadTimerRef.current);
+    }
+    downloadTimerRef.current = window.setTimeout(() => {
+      setDownloaded(false);
+      downloadTimerRef.current = null;
+    }, 2500);
+  };
 
   const kpis = [
     {
       label: 'Total Revenue',
-      value: formatNaira(metrics.totalRevenue),
-      detail: `${metrics.totalOrders} orders recorded · ${formatNaira(metrics.collectedRevenue, true)} collected`,
+      value: formatNaira(periodMetrics.totalRevenue, false, symbol),
+      detail: `${periodMetrics.totalOrders} order${periodMetrics.totalOrders === 1 ? '' : 's'} · ${formatNaira(periodMetrics.collectedRevenue, true, symbol)} collected`,
       emphasis: 'text-slate-900',
     },
     {
       label: 'Total Expenses',
-      value: formatNaira(metrics.totalExpenses),
-      detail: `${state.expenses.length} operational entries logged`,
+      value: formatNaira(periodMetrics.totalExpenses, false, symbol),
+      detail: `${periodData.expenses.length} operational entr${periodData.expenses.length === 1 ? 'y' : 'ies'} logged`,
       emphasis: 'text-slate-900',
     },
     {
-      label: 'Net Profit',
-      value: formatNaira(metrics.netProfit),
-      detail: `${metrics.profitMarginPct}% net margin across recorded period`,
-      emphasis: metrics.netProfit >= 0 ? 'text-emerald-700' : 'text-rose-700',
+      label: 'Estimated Net Profit',
+      value: formatNaira(periodMetrics.netProfit, false, symbol),
+      detail: `${periodMetrics.profitMarginPct}% estimated margin`,
+      emphasis: periodMetrics.netProfit >= 0 ? 'text-emerald-700' : 'text-rose-700',
     },
     {
       label: 'Outstanding Payments',
-      value: formatNaira(metrics.outstandingPayments),
+      value: formatNaira(periodMetrics.outstandingPayments, false, symbol),
       detail:
-        metrics.unpaidOrderCount === 0
-          ? 'All recorded orders fully settled'
-          : `${metrics.unpaidOrderCount} order${metrics.unpaidOrderCount > 1 ? 's' : ''} awaiting balance`,
-      emphasis: metrics.outstandingPayments > 0 ? 'text-amber-700' : 'text-slate-900',
+        periodMetrics.unpaidOrderCount === 0
+          ? 'All orders in period settled'
+          : `${periodMetrics.unpaidOrderCount} order${periodMetrics.unpaidOrderCount > 1 ? 's' : ''} awaiting balance`,
+      emphasis: periodMetrics.outstandingPayments > 0 ? 'text-amber-700' : 'text-slate-900',
+    },
+    {
+      label: 'Total Products',
+      value: String(periodMetrics.totalProducts),
+      detail: `Stock value ${formatNaira(periodMetrics.inventoryValuation, true, symbol)}`,
+      emphasis: 'text-slate-900',
+    },
+    {
+      label: 'Low-Stock Products',
+      value: String(periodMetrics.lowStockCount),
+      detail:
+        periodMetrics.outOfStockCount > 0
+          ? `${periodMetrics.outOfStockCount} out of stock right now`
+          : periodMetrics.lowStockCount > 0
+            ? 'At or below reorder threshold'
+            : 'All inventory levels healthy',
+      emphasis: periodMetrics.lowStockCount > 0 ? 'text-amber-700' : 'text-emerald-700',
     },
   ];
 
   return (
     <div className="space-y-6">
-      {/* Business Context Strip */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-4 text-sm text-slate-600">
-        <p className="leading-snug">
-          <strong className="font-semibold text-slate-900">{state.settings.businessName}</strong>
-          {state.settings.businessType && (
-            <>
-              <span className="mx-2 text-slate-300" aria-hidden="true">·</span>
-              <span>{state.settings.businessType}</span>
-            </>
-          )}
-        </p>
-        <button
-          type="button"
-          onClick={() => onNavigate('assistant')}
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700 transition-colors hover:text-emerald-800 whitespace-nowrap"
-        >
-          <span>Ask AI Business Assistant</span>
-          <ArrowRight className="h-4 w-4" />
-        </button>
+      {/* Business Context + Daily / Weekly / Monthly Date Filter */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4 text-sm text-slate-600">
+        <div>
+          <p className="leading-snug">
+            <strong className="font-semibold text-slate-900">{state.settings.businessName}</strong>
+            {state.settings.businessType && (
+              <>
+                <span className="mx-2 text-slate-300" aria-hidden="true">·</span>
+                <span>{state.settings.businessType}</span>
+              </>
+            )}
+          </p>
+          <p className="mt-0.5 text-xs text-slate-500">Showing metrics for {periodData.periodLabel}</p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <div
+            className="flex items-center gap-1 rounded-lg bg-slate-100 p-1"
+            role="group"
+            aria-label="Dashboard performance period"
+          >
+            {PERIOD_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => handlePeriodChange(opt.value)}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                  period === opt.value
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={handleDownloadReport}
+            title={`Export ${periodData.periodLabel} performance data as CSV`}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-colors hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800 whitespace-nowrap"
+          >
+            {downloaded ? (
+              <Check className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
+            ) : (
+              <Download className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
+            )}
+            <span>{downloaded ? 'Report Downloaded' : 'Download Report'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onNavigate('assistant')}
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700 transition-colors hover:text-emerald-800 whitespace-nowrap"
+          >
+            <span>Ask AI Assistant</span>
+            <ArrowRight className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
-      {/* 4-Column KPI Row */}
-      <section aria-label="Key business metrics" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {/* 6-Card KPI Grid (Revenue, Expenses, Estimated Net Profit, Outstanding, Total Products, Low-Stock) */}
+      <section aria-label="Key business metrics" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {kpis.map((kpi) => (
           <div
             key={kpi.label}
@@ -121,7 +260,7 @@ export function DashboardView({ onNavigate, onQuickRestock }: DashboardViewProps
             <div>
               <h2 className="text-base font-semibold text-slate-900">Sales Performance</h2>
               <p className="mt-0.5 text-sm text-slate-500">
-                Revenue compared against operating expenses in NGN ({state.settings.currencySymbol})
+                Revenue compared against operating expenses in {state.settings.currencyCode} ({symbol})
               </p>
             </div>
             <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1" role="group" aria-label="Chart date range">
@@ -174,7 +313,7 @@ export function DashboardView({ onNavigate, onQuickRestock }: DashboardViewProps
                   tickLine={false}
                 />
                 <YAxis
-                  tickFormatter={(v: number) => formatNaira(v, true)}
+                  tickFormatter={(v: number) => formatNaira(v, true, symbol)}
                   tick={{ fill: '#64748b', fontSize: 12 }}
                   axisLine={false}
                   tickLine={false}
@@ -182,7 +321,7 @@ export function DashboardView({ onNavigate, onQuickRestock }: DashboardViewProps
                 />
                 <Tooltip
                   formatter={(value: unknown, name: unknown) => [
-                    formatNaira(Number(value ?? 0)),
+                    formatNaira(Number(value ?? 0), false, symbol),
                     name === 'revenue' ? 'Revenue' : 'Expenses',
                   ]}
                   contentStyle={{
@@ -294,7 +433,9 @@ export function DashboardView({ onNavigate, onQuickRestock }: DashboardViewProps
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-base font-semibold text-slate-900">Recent Transactions</h2>
-              <p className="mt-0.5 text-sm text-slate-500">Latest recorded customer sales and payment status</p>
+              <p className="mt-0.5 text-sm text-slate-500">
+                Recorded customer sales for {periodData.periodLabel.toLowerCase()}
+              </p>
             </div>
             <button
               type="button"
@@ -307,9 +448,9 @@ export function DashboardView({ onNavigate, onQuickRestock }: DashboardViewProps
 
           {recentSales.length === 0 ? (
             <div className="mt-6 flex flex-col items-center justify-center py-10 text-center">
-              <p className="text-sm font-medium text-slate-900">No sales recorded yet</p>
+              <p className="text-sm font-medium text-slate-900">No sales in this period</p>
               <p className="mt-1 text-xs text-slate-500">
-                Record your first customer order to start tracking revenue and payment status.
+                Record a customer order or switch to All Time to view older transactions.
               </p>
               <button
                 type="button"
@@ -361,12 +502,12 @@ export function DashboardView({ onNavigate, onQuickRestock }: DashboardViewProps
                           </span>
                           {balance > 0 && (
                             <p className="mt-0.5 font-mono text-[11px] text-slate-500 tabular-nums">
-                              Due {formatNaira(balance)}
+                              Due {formatNaira(balance, false, symbol)}
                             </p>
                           )}
                         </td>
                         <td className="py-3 pl-3 text-right align-top font-mono text-sm font-medium text-slate-900 tabular-nums">
-                          {formatNaira(sale.totalAmount)}
+                          {formatNaira(sale.totalAmount, false, symbol)}
                         </td>
                       </tr>
                     );
@@ -385,7 +526,7 @@ export function DashboardView({ onNavigate, onQuickRestock }: DashboardViewProps
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-base font-semibold text-slate-900">Top-Selling Products</h2>
-              <p className="mt-0.5 text-sm text-slate-500">Ranked by total sales revenue</p>
+              <p className="mt-0.5 text-sm text-slate-500">Ranked by sales revenue in period</p>
             </div>
             <button
               type="button"
@@ -396,7 +537,7 @@ export function DashboardView({ onNavigate, onQuickRestock }: DashboardViewProps
             </button>
           </div>
 
-          {topSellingProducts.length === 0 ? (
+          {periodTopProducts.length === 0 ? (
             <div className="mt-6 flex flex-col items-center justify-center py-10 text-center">
               <p className="text-sm font-medium text-slate-900">No product rankings yet</p>
               <p className="mt-1 text-xs text-slate-500">
@@ -405,7 +546,7 @@ export function DashboardView({ onNavigate, onQuickRestock }: DashboardViewProps
             </div>
           ) : (
             <div className="mt-5 space-y-4">
-              {topSellingProducts.map((item, idx) => (
+              {periodTopProducts.map((item, idx) => (
                 <div key={item.productName}>
                   <div className="flex items-baseline justify-between gap-3">
                     <p className="truncate text-sm font-medium text-slate-900">
@@ -413,7 +554,7 @@ export function DashboardView({ onNavigate, onQuickRestock }: DashboardViewProps
                       {item.productName}
                     </p>
                     <span className="shrink-0 font-mono text-sm font-medium text-slate-900 tabular-nums">
-                      {formatNaira(item.revenue)}
+                      {formatNaira(item.revenue, false, symbol)}
                     </span>
                   </div>
                   <div className="mt-1.5 flex items-center gap-3">

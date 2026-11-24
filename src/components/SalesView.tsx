@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Search, Check, Trash2 } from 'lucide-react';
-import { PaymentMethod, PaymentStatus } from '../types/business';
+import { Search, Check, Trash2, Pencil } from 'lucide-react';
+import { PaymentMethod, PaymentStatus, SaleOrder } from '../types/business';
 import { getTodayIsoDate, PAYMENT_METHODS } from '../data/constants';
+import { generateDocumentId } from '../firebase';
 import { useBusiness } from '../context/BusinessContext';
 import {
   formatNaira,
@@ -20,14 +21,19 @@ interface SalesViewProps {
 const STATUS_FILTERS: Array<'All' | PaymentStatus> = ['All', 'Paid', 'Pending', 'Partial'];
 
 export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewProps) {
-  const { state, metrics, recordSale, markOrderPaid, deleteSale } = useBusiness();
+  const { state, metrics, recordSale, updateSale, markOrderPaid, deleteSale } = useBusiness();
+  const symbol = state.settings.currencySymbol || '₦';
+
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'All' | PaymentStatus>('All');
   const [feedback, setFeedback] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Record Sale form state
+  const [editingSale, setEditingSale] = useState<SaleOrder | null>(null);
+  const [draftSaleId, setDraftSaleId] = useState<string>(() => generateDocumentId('sale'));
+
+  // Record / Edit Sale form state
   const [selectedProductId, setSelectedProductId] = useState<string>(state.products[0]?.id ?? 'custom');
   const [customProductName, setCustomProductName] = useState('');
   const [quantity, setQuantity] = useState('1');
@@ -43,21 +49,28 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
   const [notes, setNotes] = useState('');
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
-  // Sync default product selection when modal opens and inventory changes
+  const modalVisible = isModalOpen || editingSale !== null;
+
+  // Generate a fresh idempotency draftSaleId whenever opening a new sale modal
   useEffect(() => {
-    if (!isModalOpen) return;
-    if (selectedProductId === 'custom' && state.products.length > 0 && !customProductName) {
-      setSelectedProductId(state.products[0].id);
-      setUnitPrice(String(state.products[0].unitPrice));
-    } else if (
-      selectedProductId !== 'custom' &&
-      !state.products.some((p) => p.id === selectedProductId)
-    ) {
+    if (isModalOpen && !editingSale) {
+      setDraftSaleId(generateDocumentId('sale'));
       const first = state.products[0];
       setSelectedProductId(first ? first.id : 'custom');
+      setCustomProductName('');
       setUnitPrice(first ? String(first.unitPrice) : '');
+      setQuantity('1');
+      setCustomerName('');
+      setCustomerPhone('');
+      setPaymentStatus('Paid');
+      setAmountPaid('');
+      setPaymentMethod('Bank Transfer');
+      setDate(getTodayIsoDate());
+      setNotes('');
+      setFormErrors({});
+      setSubmitError(null);
     }
-  }, [isModalOpen, state.products, selectedProductId, customProductName]);
+  }, [isModalOpen, editingSale, state.products]);
 
   const selectedProduct = useMemo(
     () => state.products.find((p) => p.id === selectedProductId) ?? null,
@@ -85,7 +98,7 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
   const handleProductChange = (val: string) => {
     setSelectedProductId(val);
     if (val === 'custom') {
-      setUnitPrice('');
+      if (!editingSale) setUnitPrice('');
     } else {
       const prod = state.products.find((p) => p.id === val);
       if (prod) {
@@ -95,24 +108,38 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
     setFormErrors((prev) => ({ ...prev, productName: '', unitPrice: '' }));
   };
 
-  const resetForm = () => {
-    const first = state.products[0];
-    setSelectedProductId(first?.id ?? 'custom');
-    setCustomProductName('');
-    setQuantity('1');
-    setUnitPrice(first ? String(first.unitPrice) : '');
-    setCustomerName('');
-    setCustomerPhone('');
-    setPaymentStatus('Paid');
-    setAmountPaid('');
-    setPaymentMethod('Bank Transfer');
-    setDate(getTodayIsoDate());
-    setNotes('');
+  const handleCustomerNameChange = (value: string) => {
+    setCustomerName(value);
+    const matched = state.customers.find(
+      (c) => c.name.trim().toLowerCase() === value.trim().toLowerCase()
+    );
+    if (matched && matched.phone && !customerPhone) {
+      setCustomerPhone(matched.phone);
+    }
+  };
+
+  const openEditModal = (order: SaleOrder) => {
+    setEditingSale(order);
+    const hasLinkedProduct = Boolean(
+      order.productId && state.products.some((p) => p.id === order.productId)
+    );
+    setSelectedProductId(hasLinkedProduct && order.productId ? order.productId : 'custom');
+    setCustomProductName(hasLinkedProduct ? '' : order.productName);
+    setQuantity(String(order.quantity));
+    setUnitPrice(String(order.unitPrice));
+    setCustomerName(order.customerName);
+    setCustomerPhone(order.customerPhone === 'Not provided' ? '' : order.customerPhone);
+    setPaymentStatus(order.paymentStatus);
+    setAmountPaid(order.paymentStatus === 'Partial' ? String(order.amountPaid) : '');
+    setPaymentMethod(order.paymentMethod);
+    setDate(order.date);
+    setNotes(order.notes ?? '');
     setFormErrors({});
     setSubmitError(null);
   };
 
   const handleClose = () => {
+    setEditingSale(null);
     setFormErrors({});
     setSubmitError(null);
     onCloseModal();
@@ -120,6 +147,8 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
+
     const productName = selectedProduct ? selectedProduct.name : customProductName;
     const qtyNum = Number(quantity);
     const priceNum = Number(unitPrice);
@@ -147,25 +176,42 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const created = await recordSale({
-        productId: selectedProduct ? selectedProduct.id : null,
-        productName,
-        quantity: qtyNum,
-        unitPrice: priceNum,
-        customerName,
-        customerPhone,
-        paymentStatus,
-        amountPaid: paidNum,
-        paymentMethod,
-        date: date || getTodayIsoDate(),
-        notes,
-      });
+      if (editingSale) {
+        await updateSale(editingSale.id, {
+          productId: selectedProduct ? selectedProduct.id : null,
+          productName,
+          quantity: qtyNum,
+          unitPrice: priceNum,
+          customerName,
+          customerPhone,
+          paymentStatus,
+          amountPaid: paidNum,
+          paymentMethod,
+          date: date || getTodayIsoDate(),
+          notes,
+        });
+        setFeedback(`Updated order ${editingSale.orderNumber} in Cloud Firestore.`);
+      } else {
+        const created = await recordSale({
+          draftSaleId,
+          productId: selectedProduct ? selectedProduct.id : null,
+          productName,
+          quantity: qtyNum,
+          unitPrice: priceNum,
+          customerName,
+          customerPhone,
+          paymentStatus,
+          amountPaid: paidNum,
+          paymentMethod,
+          date: date || getTodayIsoDate(),
+          notes,
+        });
+        setFeedback(
+          `Order ${created.orderNumber} saved to Firestore for ${created.customerName} (${formatNaira(created.totalAmount, false, symbol)}).`
+        );
+      }
 
-      setFeedback(
-        `Order ${created.orderNumber} saved to Firestore for ${created.customerName} (${formatNaira(created.totalAmount)}).`
-      );
-      resetForm();
-      onCloseModal();
+      handleClose();
     } catch {
       setSubmitError('Unable to save sale right now. Please verify your inputs and try again.');
     } finally {
@@ -182,9 +228,10 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
     }
   };
 
-  const handleDelete = async (orderId: string) => {
+  const handleDelete = async (order: SaleOrder) => {
     try {
-      await deleteSale(orderId);
+      await deleteSale(order.id);
+      setFeedback(`Deleted order ${order.orderNumber} and restored any linked stock.`);
     } catch {
       setFeedback('Could not delete order. Please try again.');
     }
@@ -213,21 +260,23 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
         <div className="rounded-xl border border-slate-200 bg-white p-5">
           <p className="text-sm font-medium text-slate-500">Total Sales Value</p>
           <p className="mt-1.5 font-mono text-2xl font-semibold text-slate-900 tabular-nums">
-            {formatNaira(metrics.totalRevenue)}
+            {formatNaira(metrics.totalRevenue, false, symbol)}
           </p>
-          <p className="mt-1 text-xs text-slate-500">{metrics.totalOrders} total orders logged</p>
+          <p className="mt-1 text-xs text-slate-500">
+            {metrics.totalOrders} total orders · {state.customers.length} customer{state.customers.length === 1 ? '' : 's'}
+          </p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-5">
           <p className="text-sm font-medium text-slate-500">Payments Collected</p>
           <p className="mt-1.5 font-mono text-2xl font-semibold text-emerald-700 tabular-nums">
-            {formatNaira(metrics.collectedRevenue)}
+            {formatNaira(metrics.collectedRevenue, false, symbol)}
           </p>
           <p className="mt-1 text-xs text-slate-500">Settled via bank transfer, POS, cash & mobile</p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-5">
           <p className="text-sm font-medium text-slate-500">Outstanding Receivables</p>
           <p className="mt-1.5 font-mono text-2xl font-semibold text-amber-700 tabular-nums">
-            {formatNaira(metrics.outstandingPayments)}
+            {formatNaira(metrics.outstandingPayments, false, symbol)}
           </p>
           <p className="mt-1 text-xs text-slate-500">
             {metrics.unpaidOrderCount} order{metrics.unpaidOrderCount === 1 ? '' : 's'} with balance due
@@ -277,7 +326,7 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
             </p>
             <p className="mt-1 text-sm text-slate-500">
               {state.sales.length === 0
-                ? 'Record your first customer sale to track revenue and receivables in Firestore.'
+                ? 'Record your first customer sale to track revenue, customers, and receivables in Firestore.'
                 : 'Adjust your search or status filter, or record a new customer sale.'}
             </p>
             <div className="mt-4 flex items-center justify-center gap-3">
@@ -304,7 +353,7 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] border-collapse text-left text-sm">
+            <table className="w-full min-w-[840px] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/70 text-xs font-medium text-slate-500">
                   <th className="py-3 pr-3 pl-6 font-medium">Order</th>
@@ -335,7 +384,7 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
                       <td className="px-3 py-3.5 align-top">
                         <p className="font-medium text-slate-900">{order.productName}</p>
                         <p className="mt-0.5 font-mono text-xs text-slate-500 tabular-nums">
-                          {order.quantity} × {formatNaira(order.unitPrice)}
+                          {order.quantity} × {formatNaira(order.unitPrice, false, symbol)}
                         </p>
                       </td>
                       <td className="px-3 py-3.5 align-top">
@@ -356,15 +405,15 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
                         </div>
                         {balance > 0 && (
                           <p className="mt-0.5 font-mono text-xs text-amber-700 tabular-nums">
-                            Balance: {formatNaira(balance)}
+                            Balance: {formatNaira(balance, false, symbol)}
                           </p>
                         )}
                       </td>
                       <td className="px-3 py-3.5 text-right align-top font-mono text-sm font-semibold text-slate-900 tabular-nums">
-                        {formatNaira(order.totalAmount)}
+                        {formatNaira(order.totalAmount, false, symbol)}
                       </td>
                       <td className="py-3.5 pr-6 pl-3 text-right align-top">
-                        <div className="inline-flex items-center justify-end gap-2">
+                        <div className="inline-flex items-center justify-end gap-1.5">
                           {balance > 0 && (
                             <button
                               type="button"
@@ -378,7 +427,15 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
                           )}
                           <button
                             type="button"
-                            onClick={() => void handleDelete(order.id)}
+                            onClick={() => openEditModal(order)}
+                            aria-label={`Edit order ${order.orderNumber}`}
+                            className="flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDelete(order)}
                             aria-label={`Delete order ${order.orderNumber}`}
                             className="flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
                           >
@@ -395,12 +452,16 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
         )}
       </section>
 
-      {/* Record Sale Modal */}
+      {/* Record / Edit Sale Modal */}
       <Modal
-        isOpen={isModalOpen}
+        isOpen={modalVisible}
         onClose={handleClose}
-        title="Record New Sale"
-        subtitle="Saved directly to Cloud Firestore with automatic stock deduction."
+        title={editingSale ? `Edit Sale ${editingSale.orderNumber}` : 'Record New Sale'}
+        subtitle={
+          editingSale
+            ? 'Updates the transaction and adjusts linked inventory by the exact quantity difference.'
+            : 'Saved atomically to Cloud Firestore with duplicate-safe inventory deduction.'
+        }
         maxWidthClass="max-w-xl"
       >
         <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4" noValidate>
@@ -423,7 +484,7 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
               >
                 {state.products.map((prod) => (
                   <option key={prod.id} value={prod.id}>
-                    {prod.name} — {formatNaira(prod.unitPrice)} ({prod.stock} in stock)
+                    {prod.name} — {formatNaira(prod.unitPrice, false, symbol)} ({prod.stock} in stock)
                   </option>
                 ))}
                 <option value="custom">+ Custom / unlisted item</option>
@@ -470,7 +531,7 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
 
             <div>
               <label htmlFor="sale-unit-price" className="block text-xs font-medium text-slate-700">
-                Unit Price (₦)
+                Unit Price ({symbol})
               </label>
               <input
                 id="sale-unit-price"
@@ -493,12 +554,18 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
               <input
                 id="sale-customer-name"
                 type="text"
+                list="sale-customer-suggestions"
                 maxLength={140}
                 value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
+                onChange={(e) => handleCustomerNameChange(e.target.value)}
                 placeholder="e.g., Chinedu Okafor"
                 className="mt-1 h-10 w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
               />
+              <datalist id="sale-customer-suggestions">
+                {state.customers.map((c) => (
+                  <option key={c.id} value={c.name} />
+                ))}
+              </datalist>
               {formErrors.customerName && (
                 <p className="mt-1 text-xs text-rose-600">{formErrors.customerName}</p>
               )}
@@ -556,7 +623,7 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
             {paymentStatus === 'Partial' && (
               <div>
                 <label htmlFor="sale-amount-paid" className="block text-xs font-medium text-slate-700">
-                  Amount Received So Far (₦)
+                  Amount Received So Far ({symbol})
                 </label>
                 <input
                   id="sale-amount-paid"
@@ -606,7 +673,7 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
           <div className="flex items-center justify-between rounded-lg bg-slate-50 px-4 py-3 border border-slate-200">
             <span className="text-sm font-medium text-slate-600">Calculated Order Total</span>
             <span className="font-mono text-lg font-semibold text-slate-900 tabular-nums">
-              {formatNaira(liveTotal)}
+              {formatNaira(liveTotal, false, symbol)}
             </span>
           </div>
 
@@ -624,7 +691,7 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
               disabled={submitting}
               className="h-10 rounded-lg bg-emerald-600 px-5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
             >
-              {submitting ? 'Saving...' : 'Save Sale'}
+              {submitting ? 'Saving...' : editingSale ? 'Update Sale' : 'Save Sale'}
             </button>
           </div>
         </form>

@@ -4,8 +4,10 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   onSnapshot,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   Timestamp,
@@ -16,6 +18,9 @@ import {
 import {
   BusinessSettings,
   BusinessState,
+  CurrencyCode,
+  CurrencySymbol,
+  Customer,
   Expense,
   ExpenseCategory,
   PaymentMethod,
@@ -33,8 +38,10 @@ import {
   OperationType,
   sanitizeText,
 } from '../firebase';
+import { getCurrencySymbol } from '../data/constants';
 import {
   calculateDashboardMetrics,
+  computeSaleStockDelta,
   DashboardMetrics,
   ExpenseCategorySummary,
   getExpenseByCategory,
@@ -49,9 +56,11 @@ interface CreateProfilePayload {
   businessType: string;
   address: string;
   phone: string;
+  currencyCode: CurrencyCode;
 }
 
-interface NewSalePayload {
+export interface SaleFormPayload {
+  draftSaleId?: string;
   productId: string | null;
   productName: string;
   quantity: number;
@@ -65,7 +74,7 @@ interface NewSalePayload {
   notes?: string;
 }
 
-interface NewExpensePayload {
+export interface ExpenseFormPayload {
   date: string;
   category: ExpenseCategory;
   description: string;
@@ -74,7 +83,7 @@ interface NewExpensePayload {
   paymentMethod: PaymentMethod;
 }
 
-interface NewProductPayload {
+export interface ProductFormPayload {
   sku: string;
   name: string;
   category: ProductCategory;
@@ -88,6 +97,7 @@ interface NewProductPayload {
 interface BusinessContextValue {
   user: User | null;
   authReady: boolean;
+  emailVerified: boolean;
   profileLoading: boolean;
   profileExists: boolean;
   dataLoading: boolean;
@@ -96,15 +106,18 @@ interface BusinessContextValue {
   lowStockProducts: Product[];
   topSellingProducts: TopProductItem[];
   expenseByCategory: ExpenseCategorySummary[];
+  refreshAuthUser: () => Promise<boolean>;
   createBusinessProfile: (payload: CreateProfilePayload) => Promise<void>;
   signOutUser: () => Promise<void>;
-  recordSale: (payload: NewSalePayload) => Promise<SaleOrder>;
+  recordSale: (payload: SaleFormPayload) => Promise<SaleOrder>;
+  updateSale: (saleId: string, payload: SaleFormPayload) => Promise<void>;
   markOrderPaid: (orderId: string) => Promise<void>;
   deleteSale: (orderId: string) => Promise<void>;
-  recordExpense: (payload: NewExpensePayload) => Promise<Expense>;
+  recordExpense: (payload: ExpenseFormPayload) => Promise<Expense>;
+  updateExpense: (expenseId: string, payload: ExpenseFormPayload) => Promise<void>;
   deleteExpense: (expenseId: string) => Promise<void>;
-  addProduct: (payload: NewProductPayload) => Promise<Product>;
-  updateProduct: (productId: string, payload: NewProductPayload) => Promise<void>;
+  addProduct: (payload: ProductFormPayload) => Promise<Product>;
+  updateProduct: (productId: string, payload: ProductFormPayload) => Promise<void>;
   restockProduct: (productId: string, addedQuantity: number) => Promise<void>;
   deleteProduct: (productId: string) => Promise<void>;
   updateSettings: (settings: BusinessSettings) => Promise<void>;
@@ -112,6 +125,7 @@ interface BusinessContextValue {
 
 const EMPTY_SETTINGS: BusinessSettings = {
   userId: '',
+  businessId: '',
   businessName: '',
   ownerName: '',
   businessType: '',
@@ -146,9 +160,36 @@ function timestampToMs(value: unknown): number {
   return 0;
 }
 
+function normalizeCurrency(code: unknown): { code: CurrencyCode; symbol: CurrencySymbol } {
+  if (code === 'USD' || code === 'GBP' || code === 'GHS' || code === 'NGN') {
+    return { code, symbol: getCurrencySymbol(code) };
+  }
+  return { code: 'NGN', symbol: '₦' };
+}
+
+function normalizeSaleAmounts(
+  quantity: number,
+  unitPrice: number,
+  paymentStatus: PaymentStatus,
+  rawAmountPaid: number
+): { totalAmount: number; amountPaid: number } {
+  const totalAmount = Math.round(quantity * unitPrice * 100) / 100;
+  const amountPaid =
+    paymentStatus === 'Paid'
+      ? totalAmount
+      : paymentStatus === 'Pending'
+        ? 0
+        : Math.min(
+            Math.round((totalAmount - 0.01) * 100) / 100,
+            Math.max(0.01, Math.round(rawAmountPaid * 100) / 100)
+          );
+  return { totalAmount, amountPaid };
+}
+
 export function BusinessProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [emailVerified, setEmailVerified] = useState(false);
 
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileExists, setProfileExists] = useState(false);
@@ -157,15 +198,16 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [sales, setSales] = useState<SaleOrder[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [loadedFlags, setLoadedFlags] = useState({
-    inventory: false,
+    products: false,
     sales: false,
     expenses: false,
+    customers: false,
   });
 
   const [fatalError, setFatalError] = useState<Error | null>(null);
 
-  // Surface async Firestore listener errors to React ErrorBoundary
   if (fatalError) {
     throw fatalError;
   }
@@ -174,6 +216,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
+      setEmailVerified(Boolean(firebaseUser?.emailVerified));
       setAuthReady(true);
       if (!firebaseUser) {
         setProfileExists(false);
@@ -182,51 +225,87 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
         setProducts([]);
         setSales([]);
         setExpenses([]);
-        setLoadedFlags({ inventory: false, sales: false, expenses: false });
+        setCustomers([]);
+        setLoadedFlags({ products: false, sales: false, expenses: false, customers: false });
       }
     });
     return () => unsub();
   }, []);
 
-  // 2. User Profile Listener (only when auth is ready and user is authenticated)
+  const refreshAuthUser = async (): Promise<boolean> => {
+    const current = auth.currentUser;
+    if (!current) {
+      setEmailVerified(false);
+      return false;
+    }
+    await current.reload();
+    await current.getIdToken(true);
+    const verified = Boolean(auth.currentUser?.emailVerified);
+    setEmailVerified(verified);
+    setUser(auth.currentUser);
+    return verified;
+  };
+
+  // 2. User + Business Profile Listeners (/users/{uid} and /businesses/{uid})
   useEffect(() => {
-    if (!authReady || !user) return;
+    if (!authReady || !user || !emailVerified) {
+      setProfileLoading(false);
+      return;
+    }
     setProfileLoading(true);
     const userDocPath = `users/${user.uid}`;
+    const bizDocPath = `businesses/${user.uid}`;
     const userRef = doc(db, 'users', user.uid);
+    const bizRef = doc(db, 'businesses', user.uid);
 
-    const unsub = onSnapshot(
+    let userLoaded = false;
+    let bizLoaded = false;
+    let userData: Record<string, unknown> | null = null;
+    let bizData: Record<string, unknown> | null = null;
+
+    const reconcileProfile = () => {
+      if (!userLoaded || !bizLoaded) return;
+      if (userData || bizData) {
+        const curr = normalizeCurrency(bizData?.currencyCode ?? userData?.currencyCode);
+        setSettings({
+          userId: String(userData?.userId ?? bizData?.userId ?? user.uid),
+          businessId: String(bizData?.businessId ?? userData?.businessId ?? user.uid),
+          businessName: String(bizData?.businessName ?? userData?.businessName ?? ''),
+          ownerName: String(userData?.name ?? user.displayName ?? ''),
+          businessType: String(bizData?.businessCategory ?? userData?.businessType ?? ''),
+          rcNumber: String(bizData?.rcNumber ?? userData?.rcNumber ?? ''),
+          address: String(bizData?.location ?? userData?.address ?? ''),
+          phone: String(bizData?.phone ?? userData?.phone ?? ''),
+          email: String(userData?.email ?? user.email ?? ''),
+          currencyCode: curr.code,
+          currencySymbol: curr.symbol,
+          defaultReorderLevel: Number(
+            bizData?.defaultReorderLevel ?? userData?.defaultReorderLevel ?? 10
+          ),
+          vatEnabled: Boolean(bizData?.vatEnabled ?? userData?.vatEnabled ?? true),
+          vatRate: Number(bizData?.vatRate ?? userData?.vatRate ?? 7.5),
+          createdAt: timestampToIsoDate(userData?.createdAt ?? bizData?.createdAt),
+        });
+        setProfileExists(true);
+      } else {
+        setProfileExists(false);
+        setSettings({
+          ...EMPTY_SETTINGS,
+          userId: user.uid,
+          businessId: user.uid,
+          ownerName: user.displayName ?? '',
+          email: user.email ?? '',
+        });
+      }
+      setProfileLoading(false);
+    };
+
+    const unsubUser = onSnapshot(
       userRef,
       (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          setSettings({
-            userId: String(data.userId ?? user.uid),
-            businessName: String(data.businessName ?? ''),
-            ownerName: String(data.name ?? user.displayName ?? ''),
-            businessType: String(data.businessType ?? ''),
-            rcNumber: String(data.rcNumber ?? ''),
-            address: String(data.address ?? ''),
-            phone: String(data.phone ?? ''),
-            email: String(data.email ?? user.email ?? ''),
-            currencyCode: 'NGN',
-            currencySymbol: '₦',
-            defaultReorderLevel: Number(data.defaultReorderLevel ?? 10),
-            vatEnabled: Boolean(data.vatEnabled ?? true),
-            vatRate: Number(data.vatRate ?? 7.5),
-            createdAt: timestampToIsoDate(data.createdAt),
-          });
-          setProfileExists(true);
-        } else {
-          setProfileExists(false);
-          setSettings({
-            ...EMPTY_SETTINGS,
-            userId: user.uid,
-            ownerName: user.displayName ?? '',
-            email: user.email ?? '',
-          });
-        }
-        setProfileLoading(false);
+        userData = snap.exists() ? (snap.data() as Record<string, unknown>) : null;
+        userLoaded = true;
+        reconcileProfile();
       },
       (error) => {
         try {
@@ -237,24 +316,44 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
       }
     );
 
-    return () => unsub();
-  }, [authReady, user]);
+    const unsubBiz = onSnapshot(
+      bizRef,
+      (snap) => {
+        bizData = snap.exists() ? (snap.data() as Record<string, unknown>) : null;
+        bizLoaded = true;
+        reconcileProfile();
+      },
+      (error) => {
+        try {
+          handleFirestoreError(error, OperationType.GET, bizDocPath);
+        } catch (wrapped) {
+          setFatalError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+        }
+      }
+    );
 
-  // 3. Tenant-Scoped Real-Time Listeners for Inventory, Sales, and Expenses
+    return () => {
+      unsubUser();
+      unsubBiz();
+    };
+  }, [authReady, user, emailVerified]);
+
+  // 3. Tenant-Scoped Real-Time Listeners for Products, Sales, Expenses, and Customers
   useEffect(() => {
-    if (!authReady || !user || !profileExists) {
+    if (!authReady || !user || !emailVerified || !profileExists) {
       setProducts([]);
       setSales([]);
       setExpenses([]);
-      setLoadedFlags({ inventory: false, sales: false, expenses: false });
+      setCustomers([]);
+      setLoadedFlags({ products: false, sales: false, expenses: false, customers: false });
       return;
     }
 
     const uid = user.uid;
 
-    const invQuery = query(collection(db, 'inventory'), where('userId', '==', uid));
-    const unsubInv = onSnapshot(
-      invQuery,
+    const productsQuery = query(collection(db, 'products'), where('userId', '==', uid));
+    const unsubProducts = onSnapshot(
+      productsQuery,
       (snap) => {
         const list: Product[] = snap.docs
           .map((d) => {
@@ -262,6 +361,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
             return {
               id: d.id,
               userId: String(data.userId ?? uid),
+              businessId: String(data.businessId ?? uid),
               sku: String(data.sku ?? ''),
               name: String(data.productName ?? ''),
               category: data.category as ProductCategory,
@@ -278,11 +378,11 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
           .map(({ _createdMs: _unused, ...rest }) => rest);
 
         setProducts(list);
-        setLoadedFlags((prev) => ({ ...prev, inventory: true }));
+        setLoadedFlags((prev) => ({ ...prev, products: true }));
       },
       (error) => {
         try {
-          handleFirestoreError(error, OperationType.LIST, 'inventory');
+          handleFirestoreError(error, OperationType.LIST, 'products');
         } catch (wrapped) {
           setFatalError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
         }
@@ -300,6 +400,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
               id: d.id,
               orderNumber: String(data.orderNumber ?? d.id.slice(0, 8).toUpperCase()),
               userId: String(data.userId ?? uid),
+              businessId: String(data.businessId ?? uid),
               date: String(data.date ?? ''),
               productId: data.productId ? String(data.productId) : null,
               productName: String(data.product ?? ''),
@@ -307,11 +408,13 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
               unitPrice: Number(data.unitPrice ?? 0),
               totalAmount: Number(data.totalAmount ?? 0),
               amountPaid: Number(data.amountPaid ?? 0),
+              customerId: data.customerId ? String(data.customerId) : null,
               customerName: String(data.customer ?? ''),
               customerPhone: String(data.customerPhone ?? ''),
               paymentStatus: data.paymentStatus as PaymentStatus,
               paymentMethod: data.paymentMethod as PaymentMethod,
               notes: data.notes ? String(data.notes) : undefined,
+              stockDeductedQty: Number(data.stockDeductedQty ?? 0),
               createdAtMs: timestampToMs(data.createdAt),
             };
           })
@@ -342,6 +445,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
             return {
               id: d.id,
               userId: String(data.userId ?? uid),
+              businessId: String(data.businessId ?? uid),
               date: String(data.date ?? ''),
               category: data.category as ExpenseCategory,
               description: String(data.description ?? ''),
@@ -368,19 +472,54 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
       }
     );
 
+    const customersQuery = query(collection(db, 'customers'), where('userId', '==', uid));
+    const unsubCustomers = onSnapshot(
+      customersQuery,
+      (snap) => {
+        const list: Customer[] = snap.docs
+          .map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              userId: String(data.userId ?? uid),
+              businessId: String(data.businessId ?? uid),
+              name: String(data.name ?? ''),
+              phone: String(data.phone ?? ''),
+              email: String(data.email ?? ''),
+              totalOrders: Number(data.totalOrders ?? 0),
+              totalSpent: Number(data.totalSpent ?? 0),
+              lastOrderDate: String(data.lastOrderDate ?? ''),
+            };
+          })
+          .sort((a, b) => b.totalSpent - a.totalSpent);
+
+        setCustomers(list);
+        setLoadedFlags((prev) => ({ ...prev, customers: true }));
+      },
+      (error) => {
+        try {
+          handleFirestoreError(error, OperationType.LIST, 'customers');
+        } catch (wrapped) {
+          setFatalError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+        }
+      }
+    );
+
     return () => {
-      unsubInv();
+      unsubProducts();
       unsubSales();
       unsubExpenses();
+      unsubCustomers();
     };
   }, [authReady, user, profileExists]);
 
   const dataLoading =
-    profileExists && !(loadedFlags.inventory && loadedFlags.sales && loadedFlags.expenses);
+    profileExists &&
+    !(loadedFlags.products && loadedFlags.sales && loadedFlags.expenses && loadedFlags.customers);
 
   const state: BusinessState = useMemo(
-    () => ({ products, sales, expenses, settings }),
-    [products, sales, expenses, settings]
+    () => ({ products, sales, expenses, customers, settings }),
+    [products, sales, expenses, customers, settings]
   );
 
   const metrics = useMemo(
@@ -393,23 +532,51 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
   const expenseByCategory = useMemo(() => getExpenseByCategory(expenses), [expenses]);
 
   // ---------------------------------------------------------------------------
-  // Firestore Write Actions (Blueprint-synchronized & Error-Handled)
+  // Firestore Write Actions (Blueprint-synchronized & Transaction-Safe)
   // ---------------------------------------------------------------------------
 
   const createBusinessProfile = async (payload: CreateProfilePayload): Promise<void> => {
     if (!user) throw new Error('You must be signed in to create a business profile.');
-    const path = `users/${user.uid}`;
-    const docData = {
+    const curr = normalizeCurrency(payload.currencyCode);
+    const safeName = sanitizeText(
+      payload.name || user.displayName || 'Business Owner',
+      BLUEPRINT_LIMITS.nameMax
+    );
+    const safeEmail = sanitizeText(user.email || 'owner@business.ng', BLUEPRINT_LIMITS.emailMax);
+    const safeBizName = sanitizeText(payload.businessName, BLUEPRINT_LIMITS.businessNameMax);
+    const safeCategory = sanitizeText(payload.businessType, BLUEPRINT_LIMITS.businessTypeMax);
+    const safeLocation = sanitizeText(payload.address, BLUEPRINT_LIMITS.addressMax);
+    const safePhone = sanitizeText(payload.phone, BLUEPRINT_LIMITS.phoneMax);
+
+    const userDoc = {
       userId: user.uid,
-      name: sanitizeText(payload.name || user.displayName || 'Business Owner', BLUEPRINT_LIMITS.nameMax),
-      email: sanitizeText(user.email || 'owner@business.ng', BLUEPRINT_LIMITS.emailMax),
-      businessName: sanitizeText(payload.businessName, BLUEPRINT_LIMITS.businessNameMax),
-      businessType: sanitizeText(payload.businessType, BLUEPRINT_LIMITS.businessTypeMax),
+      businessId: user.uid,
+      name: safeName,
+      email: safeEmail,
+      businessName: safeBizName,
+      businessType: safeCategory,
       rcNumber: '',
-      address: sanitizeText(payload.address, BLUEPRINT_LIMITS.addressMax),
-      phone: sanitizeText(payload.phone, BLUEPRINT_LIMITS.phoneMax),
-      currencyCode: 'NGN',
-      currencySymbol: '₦',
+      address: safeLocation,
+      phone: safePhone,
+      currencyCode: curr.code,
+      currencySymbol: curr.symbol,
+      defaultReorderLevel: 10,
+      vatEnabled: true,
+      vatRate: 7.5,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+
+    const businessDoc = {
+      businessId: user.uid,
+      userId: user.uid,
+      businessName: safeBizName,
+      businessCategory: safeCategory,
+      location: safeLocation,
+      phone: safePhone,
+      currencyCode: curr.code,
+      currencySymbol: curr.symbol,
+      rcNumber: '',
       defaultReorderLevel: 10,
       vatEnabled: true,
       vatRate: 7.5,
@@ -418,9 +585,12 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     };
 
     try {
-      await setDoc(doc(db, 'users', user.uid), docData);
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'users', user.uid), userDoc);
+      batch.set(doc(db, 'businesses', user.uid), businessDoc);
+      await batch.commit();
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
+      handleFirestoreError(error, OperationType.CREATE, `businesses/${user.uid}`);
     }
   };
 
@@ -428,81 +598,214 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     await signOut(auth);
   };
 
-  const recordSale = async (payload: NewSalePayload): Promise<SaleOrder> => {
+  const recordSale = async (payload: SaleFormPayload): Promise<SaleOrder> => {
     if (!user) throw new Error('Authentication required.');
 
-    const saleId = generateDocumentId('sale');
+    const saleId = payload.draftSaleId || generateDocumentId('sale');
     const orderNumber = `VP-${String(1001 + sales.length).padStart(4, '0')}`;
-    const totalAmount = Math.round(payload.quantity * payload.unitPrice * 100) / 100;
-    const amountPaid =
-      payload.paymentStatus === 'Paid'
-        ? totalAmount
-        : payload.paymentStatus === 'Pending'
-          ? 0
-          : Math.min(
-              Math.round((totalAmount - 0.01) * 100) / 100,
-              Math.max(0.01, Math.round(payload.amountPaid * 100) / 100)
-            );
+    const { totalAmount, amountPaid } = normalizeSaleAmounts(
+      payload.quantity,
+      payload.unitPrice,
+      payload.paymentStatus,
+      payload.amountPaid
+    );
 
     const safeProductId = payload.productId ? sanitizeText(payload.productId, BLUEPRINT_LIMITS.idMax) : '';
+    const safeCustomerName = sanitizeText(payload.customerName, BLUEPRINT_LIMITS.customerMax);
+    const safeCustomerPhone = sanitizeText(payload.customerPhone || '', BLUEPRINT_LIMITS.phoneMax);
+    const matchedCustomer = customers.find(
+      (c) => c.name.trim().toLowerCase() === safeCustomerName.toLowerCase()
+    );
+    const customerId = matchedCustomer?.id ?? generateDocumentId('cust');
     const salePath = `sales/${saleId}`;
 
-    const saleDoc = {
-      saleId,
-      orderNumber: sanitizeText(orderNumber, BLUEPRINT_LIMITS.orderNumberMax),
-      userId: user.uid,
-      productId: safeProductId,
-      product: sanitizeText(payload.productName, BLUEPRINT_LIMITS.productNameMax),
-      quantity: payload.quantity,
-      unitPrice: payload.unitPrice,
-      totalAmount,
-      amountPaid,
-      customer: sanitizeText(payload.customerName, BLUEPRINT_LIMITS.customerMax),
-      customerPhone: sanitizeText(payload.customerPhone || '', BLUEPRINT_LIMITS.phoneMax),
-      paymentStatus: payload.paymentStatus,
-      paymentMethod: payload.paymentMethod,
-      date: payload.date,
-      notes: sanitizeText(payload.notes || '', BLUEPRINT_LIMITS.notesMax),
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
-
     try {
-      const linkedProduct = safeProductId
-        ? products.find((p) => p.id === safeProductId && p.userId === user.uid)
-        : undefined;
+      let finalDeductedQty = 0;
 
-      if (linkedProduct) {
-        const batch = writeBatch(db);
-        batch.set(doc(db, 'sales', saleId), saleDoc);
-        batch.update(doc(db, 'inventory', linkedProduct.id), {
-          quantity: Math.max(0, linkedProduct.stock - payload.quantity),
+      await runTransaction(db, async (tx) => {
+        const saleRef = doc(db, 'sales', saleId);
+        const existingSaleSnap = await tx.get(saleRef);
+
+        // Idempotency guard: prevent accidental duplicate creation or double stock deduction
+        if (existingSaleSnap.exists()) {
+          const prevData = existingSaleSnap.data();
+          finalDeductedQty = Number(prevData.stockDeductedQty ?? 0);
+          return;
+        }
+
+        const productRef = safeProductId ? doc(db, 'products', safeProductId) : null;
+        const productSnap = productRef ? await tx.get(productRef) : null;
+
+        const customerRef = doc(db, 'customers', customerId);
+        const customerSnap = await tx.get(customerRef);
+
+        // Deduct stock safely inside transaction
+        if (productRef && productSnap && productSnap.exists()) {
+          const prodData = productSnap.data();
+          if (prodData.userId === user.uid) {
+            const currentStock = Math.max(0, Number(prodData.quantity ?? 0));
+            finalDeductedQty = Math.min(currentStock, Math.round(payload.quantity));
+            tx.update(productRef, {
+              quantity: Math.max(0, currentStock - finalDeductedQty),
+              updatedAt: serverTimestamp(),
+            });
+          }
+        }
+
+        // Upsert customer record inside transaction
+        if (customerSnap.exists()) {
+          const prevCust = customerSnap.data();
+          if (prevCust.userId === user.uid) {
+            tx.update(customerRef, {
+              name: safeCustomerName,
+              phone: safeCustomerPhone || String(prevCust.phone ?? ''),
+              email: String(prevCust.email ?? ''),
+              totalOrders: Number(prevCust.totalOrders ?? 0) + 1,
+              totalSpent: Math.round((Number(prevCust.totalSpent ?? 0) + totalAmount) * 100) / 100,
+              lastOrderDate: payload.date,
+              updatedAt: serverTimestamp(),
+            });
+          }
+        } else {
+          tx.set(customerRef, {
+            customerId,
+            userId: user.uid,
+            businessId: user.uid,
+            name: safeCustomerName,
+            phone: safeCustomerPhone,
+            email: '',
+            totalOrders: 1,
+            totalSpent: totalAmount,
+            lastOrderDate: payload.date,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+
+        tx.set(saleRef, {
+          saleId,
+          orderNumber: sanitizeText(orderNumber, BLUEPRINT_LIMITS.orderNumberMax),
+          userId: user.uid,
+          businessId: user.uid,
+          productId: safeProductId,
+          product: sanitizeText(payload.productName, BLUEPRINT_LIMITS.productNameMax),
+          quantity: payload.quantity,
+          unitPrice: payload.unitPrice,
+          totalAmount,
+          amountPaid,
+          customerId,
+          customer: safeCustomerName,
+          customerPhone: safeCustomerPhone,
+          paymentStatus: payload.paymentStatus,
+          paymentMethod: payload.paymentMethod,
+          date: payload.date,
+          notes: sanitizeText(payload.notes || '', BLUEPRINT_LIMITS.notesMax),
+          stockDeductedQty: finalDeductedQty,
+          createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
-        await batch.commit();
-      } else {
-        await setDoc(doc(db, 'sales', saleId), saleDoc);
-      }
+      });
 
       return {
         id: saleId,
-        orderNumber: saleDoc.orderNumber,
+        orderNumber,
         userId: user.uid,
-        date: saleDoc.date,
+        businessId: user.uid,
+        date: payload.date,
         productId: safeProductId || null,
-        productName: saleDoc.product,
-        quantity: saleDoc.quantity,
-        unitPrice: saleDoc.unitPrice,
-        totalAmount: saleDoc.totalAmount,
-        amountPaid: saleDoc.amountPaid,
-        customerName: saleDoc.customer,
-        customerPhone: saleDoc.customerPhone || 'Not provided',
-        paymentStatus: saleDoc.paymentStatus,
-        paymentMethod: saleDoc.paymentMethod,
-        notes: saleDoc.notes || undefined,
+        productName: sanitizeText(payload.productName, BLUEPRINT_LIMITS.productNameMax),
+        quantity: payload.quantity,
+        unitPrice: payload.unitPrice,
+        totalAmount,
+        amountPaid,
+        customerId,
+        customerName: safeCustomerName,
+        customerPhone: safeCustomerPhone || 'Not provided',
+        paymentStatus: payload.paymentStatus,
+        paymentMethod: payload.paymentMethod,
+        notes: sanitizeText(payload.notes || '', BLUEPRINT_LIMITS.notesMax) || undefined,
+        stockDeductedQty: finalDeductedQty,
       };
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, salePath);
+    }
+  };
+
+  const updateSale = async (saleId: string, payload: SaleFormPayload): Promise<void> => {
+    if (!user) throw new Error('Authentication required.');
+    const salePath = `sales/${saleId}`;
+    const { totalAmount, amountPaid } = normalizeSaleAmounts(
+      payload.quantity,
+      payload.unitPrice,
+      payload.paymentStatus,
+      payload.amountPaid
+    );
+
+    const nextProductId = payload.productId ? sanitizeText(payload.productId, BLUEPRINT_LIMITS.idMax) : '';
+    const safeCustomerName = sanitizeText(payload.customerName, BLUEPRINT_LIMITS.customerMax);
+    const safeCustomerPhone = sanitizeText(payload.customerPhone || '', BLUEPRINT_LIMITS.phoneMax);
+
+    try {
+      await runTransaction(db, async (tx) => {
+        const saleRef = doc(db, 'sales', saleId);
+        const saleSnap = await tx.get(saleRef);
+        if (!saleSnap.exists()) return;
+
+        const existingSale = saleSnap.data();
+        if (existingSale.userId !== user.uid) {
+          throw new Error('Permission denied editing another user’s sale.');
+        }
+
+        const prevProductId = existingSale.productId ? String(existingSale.productId) : null;
+        const prevDeductedQty = Number(existingSale.stockDeductedQty ?? 0);
+
+        // Read all affected products before writing
+        const productIdsToRead = Array.from(
+          new Set([prevProductId, nextProductId || null].filter((id): id is string => Boolean(id)))
+        );
+        const currentStockByProductId: Record<string, number> = {};
+        for (const pid of productIdsToRead) {
+          const pSnap = await tx.get(doc(db, 'products', pid));
+          if (pSnap.exists() && pSnap.data().userId === user.uid) {
+            currentStockByProductId[pid] = Math.max(0, Number(pSnap.data().quantity ?? 0));
+          }
+        }
+
+        const { adjustments, nextStockDeductedQty } = computeSaleStockDelta({
+          previousProductId: prevProductId,
+          previousDeductedQty: prevDeductedQty,
+          nextProductId: nextProductId || null,
+          nextQuantity: payload.quantity,
+          currentStockByProductId,
+        });
+
+        for (const [pid, nextStock] of Object.entries(adjustments)) {
+          tx.update(doc(db, 'products', pid), {
+            quantity: nextStock,
+            updatedAt: serverTimestamp(),
+          });
+        }
+
+        tx.update(saleRef, {
+          productId: nextProductId,
+          product: sanitizeText(payload.productName, BLUEPRINT_LIMITS.productNameMax),
+          quantity: payload.quantity,
+          unitPrice: payload.unitPrice,
+          totalAmount,
+          amountPaid,
+          customerId: existingSale.customerId ? String(existingSale.customerId) : '',
+          customer: safeCustomerName,
+          customerPhone: safeCustomerPhone,
+          paymentStatus: payload.paymentStatus,
+          paymentMethod: payload.paymentMethod,
+          date: payload.date,
+          notes: sanitizeText(payload.notes || '', BLUEPRINT_LIMITS.notesMax),
+          stockDeductedQty: nextStockDeductedQty,
+          updatedAt: serverTimestamp(),
+        });
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, salePath);
     }
   };
 
@@ -527,13 +830,35 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     if (!user) throw new Error('Authentication required.');
     const path = `sales/${orderId}`;
     try {
-      await deleteDoc(doc(db, 'sales', orderId));
+      await runTransaction(db, async (tx) => {
+        const saleRef = doc(db, 'sales', orderId);
+        const saleSnap = await tx.get(saleRef);
+        if (!saleSnap.exists()) return;
+
+        const data = saleSnap.data();
+        const linkedProductId = data.productId ? String(data.productId) : null;
+        const deductedQty = Math.max(0, Number(data.stockDeductedQty ?? 0));
+
+        if (linkedProductId && deductedQty > 0) {
+          const prodRef = doc(db, 'products', linkedProductId);
+          const prodSnap = await tx.get(prodRef);
+          if (prodSnap.exists() && prodSnap.data().userId === user.uid) {
+            const currentStock = Math.max(0, Number(prodSnap.data().quantity ?? 0));
+            tx.update(prodRef, {
+              quantity: currentStock + deductedQty,
+              updatedAt: serverTimestamp(),
+            });
+          }
+        }
+
+        tx.delete(saleRef);
+      });
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
     }
   };
 
-  const recordExpense = async (payload: NewExpensePayload): Promise<Expense> => {
+  const recordExpense = async (payload: ExpenseFormPayload): Promise<Expense> => {
     if (!user) throw new Error('Authentication required.');
     const expenseId = generateDocumentId('exp');
     const path = `expenses/${expenseId}`;
@@ -541,6 +866,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     const expenseDoc = {
       expenseId,
       userId: user.uid,
+      businessId: user.uid,
       category: payload.category,
       description: sanitizeText(payload.description, BLUEPRINT_LIMITS.descriptionMax),
       vendor: sanitizeText(payload.vendor, BLUEPRINT_LIMITS.vendorMax),
@@ -556,6 +882,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
       return {
         id: expenseId,
         userId: user.uid,
+        businessId: user.uid,
         date: expenseDoc.date,
         category: expenseDoc.category,
         description: expenseDoc.description,
@@ -565,6 +892,24 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
       };
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, path);
+    }
+  };
+
+  const updateExpense = async (expenseId: string, payload: ExpenseFormPayload): Promise<void> => {
+    if (!user) throw new Error('Authentication required.');
+    const path = `expenses/${expenseId}`;
+    try {
+      await updateDoc(doc(db, 'expenses', expenseId), {
+        category: payload.category,
+        description: sanitizeText(payload.description, BLUEPRINT_LIMITS.descriptionMax),
+        vendor: sanitizeText(payload.vendor, BLUEPRINT_LIMITS.vendorMax),
+        amount: Math.round(payload.amount * 100) / 100,
+        paymentMethod: payload.paymentMethod,
+        date: payload.date,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
     }
   };
 
@@ -578,14 +923,15 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const addProduct = async (payload: NewProductPayload): Promise<Product> => {
+  const addProduct = async (payload: ProductFormPayload): Promise<Product> => {
     if (!user) throw new Error('Authentication required.');
     const productId = generateDocumentId('prod');
-    const path = `inventory/${productId}`;
+    const path = `products/${productId}`;
 
     const prodDoc = {
       productId,
       userId: user.uid,
+      businessId: user.uid,
       sku: sanitizeText(payload.sku.toUpperCase(), BLUEPRINT_LIMITS.skuMax),
       productName: sanitizeText(payload.name, BLUEPRINT_LIMITS.productNameMax),
       category: payload.category,
@@ -599,10 +945,11 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     };
 
     try {
-      await setDoc(doc(db, 'inventory', productId), prodDoc);
+      await setDoc(doc(db, 'products', productId), prodDoc);
       return {
         id: productId,
         userId: user.uid,
+        businessId: user.uid,
         sku: prodDoc.sku,
         name: prodDoc.productName,
         category: prodDoc.category,
@@ -618,11 +965,11 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const updateProduct = async (productId: string, payload: NewProductPayload): Promise<void> => {
+  const updateProduct = async (productId: string, payload: ProductFormPayload): Promise<void> => {
     if (!user) throw new Error('Authentication required.');
-    const path = `inventory/${productId}`;
+    const path = `products/${productId}`;
     try {
-      await updateDoc(doc(db, 'inventory', productId), {
+      await updateDoc(doc(db, 'products', productId), {
         sku: sanitizeText(payload.sku.toUpperCase(), BLUEPRINT_LIMITS.skuMax),
         productName: sanitizeText(payload.name, BLUEPRINT_LIMITS.productNameMax),
         category: payload.category,
@@ -641,14 +988,18 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
   const restockProduct = async (productId: string, addedQuantity: number): Promise<void> => {
     if (!user) throw new Error('Authentication required.');
     if (!Number.isFinite(addedQuantity) || addedQuantity <= 0) return;
-    const target = products.find((p) => p.id === productId);
-    if (!target) return;
 
-    const path = `inventory/${productId}`;
+    const path = `products/${productId}`;
     try {
-      await updateDoc(doc(db, 'inventory', productId), {
-        quantity: target.stock + Math.round(addedQuantity),
-        updatedAt: serverTimestamp(),
+      await runTransaction(db, async (tx) => {
+        const prodRef = doc(db, 'products', productId);
+        const prodSnap = await tx.get(prodRef);
+        if (!prodSnap.exists()) return;
+        const currentStock = Math.max(0, Number(prodSnap.data().quantity ?? 0));
+        tx.update(prodRef, {
+          quantity: currentStock + Math.round(addedQuantity),
+          updatedAt: serverTimestamp(),
+        });
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
@@ -657,9 +1008,9 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
 
   const deleteProduct = async (productId: string): Promise<void> => {
     if (!user) throw new Error('Authentication required.');
-    const path = `inventory/${productId}`;
+    const path = `products/${productId}`;
     try {
-      await deleteDoc(doc(db, 'inventory', productId));
+      await deleteDoc(doc(db, 'products', productId));
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
     }
@@ -667,23 +1018,78 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
 
   const updateSettings = async (next: BusinessSettings): Promise<void> => {
     if (!user) throw new Error('Authentication required.');
-    const path = `users/${user.uid}`;
+    const curr = normalizeCurrency(next.currencyCode);
+    const safeName = sanitizeText(next.ownerName, BLUEPRINT_LIMITS.nameMax);
+    const safeEmail = sanitizeText(next.email, BLUEPRINT_LIMITS.emailMax);
+    const safeBizName = sanitizeText(next.businessName, BLUEPRINT_LIMITS.businessNameMax);
+    const safeCategory = sanitizeText(next.businessType, BLUEPRINT_LIMITS.businessTypeMax);
+    const safeRc = sanitizeText(next.rcNumber, BLUEPRINT_LIMITS.rcNumberMax);
+    const safeLocation = sanitizeText(next.address, BLUEPRINT_LIMITS.addressMax);
+    const safePhone = sanitizeText(next.phone, BLUEPRINT_LIMITS.phoneMax);
+    const safeReorder = Math.max(0, Math.min(100000, Math.round(next.defaultReorderLevel)));
+    const safeVatEnabled = Boolean(next.vatEnabled);
+    const safeVatRate = Math.max(0, Math.min(100, Number(next.vatRate) || 0));
+
+    const userRef = doc(db, 'users', user.uid);
+    const bizRef = doc(db, 'businesses', user.uid);
+
     try {
-      await updateDoc(doc(db, 'users', user.uid), {
-        name: sanitizeText(next.ownerName, BLUEPRINT_LIMITS.nameMax),
-        email: sanitizeText(next.email, BLUEPRINT_LIMITS.emailMax),
-        businessName: sanitizeText(next.businessName, BLUEPRINT_LIMITS.businessNameMax),
-        businessType: sanitizeText(next.businessType, BLUEPRINT_LIMITS.businessTypeMax),
-        rcNumber: sanitizeText(next.rcNumber, BLUEPRINT_LIMITS.rcNumberMax),
-        address: sanitizeText(next.address, BLUEPRINT_LIMITS.addressMax),
-        phone: sanitizeText(next.phone, BLUEPRINT_LIMITS.phoneMax),
-        defaultReorderLevel: Math.max(0, Math.min(100000, Math.round(next.defaultReorderLevel))),
-        vatEnabled: Boolean(next.vatEnabled),
-        vatRate: Math.max(0, Math.min(100, Number(next.vatRate) || 0)),
+      const bizSnap = await getDoc(bizRef);
+      const batch = writeBatch(db);
+
+      batch.update(userRef, {
+        businessId: user.uid,
+        name: safeName,
+        email: safeEmail,
+        businessName: safeBizName,
+        businessType: safeCategory,
+        rcNumber: safeRc,
+        address: safeLocation,
+        phone: safePhone,
+        currencyCode: curr.code,
+        currencySymbol: curr.symbol,
+        defaultReorderLevel: safeReorder,
+        vatEnabled: safeVatEnabled,
+        vatRate: safeVatRate,
         updatedAt: serverTimestamp(),
       });
+
+      if (bizSnap.exists()) {
+        batch.update(bizRef, {
+          businessName: safeBizName,
+          businessCategory: safeCategory,
+          location: safeLocation,
+          phone: safePhone,
+          currencyCode: curr.code,
+          currencySymbol: curr.symbol,
+          rcNumber: safeRc,
+          defaultReorderLevel: safeReorder,
+          vatEnabled: safeVatEnabled,
+          vatRate: safeVatRate,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        batch.set(bizRef, {
+          businessId: user.uid,
+          userId: user.uid,
+          businessName: safeBizName,
+          businessCategory: safeCategory,
+          location: safeLocation,
+          phone: safePhone,
+          currencyCode: curr.code,
+          currencySymbol: curr.symbol,
+          rcNumber: safeRc,
+          defaultReorderLevel: safeReorder,
+          vatEnabled: safeVatEnabled,
+          vatRate: safeVatRate,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      await batch.commit();
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, path);
+      handleFirestoreError(error, OperationType.UPDATE, `businesses/${user.uid}`);
     }
   };
 
@@ -692,6 +1098,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
       value={{
         user,
         authReady,
+        emailVerified,
         profileLoading,
         profileExists,
         dataLoading,
@@ -700,12 +1107,15 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
         lowStockProducts,
         topSellingProducts,
         expenseByCategory,
+        refreshAuthUser,
         createBusinessProfile,
         signOutUser,
         recordSale,
+        updateSale,
         markOrderPaid,
         deleteSale,
         recordExpense,
+        updateExpense,
         deleteExpense,
         addProduct,
         updateProduct,

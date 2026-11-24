@@ -42,6 +42,13 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/users/$(request.auth.uid));
     }
 
+    function isValidCurrency(code, symbol) {
+      return (code == 'NGN' && symbol == '₦') ||
+        (code == 'USD' && symbol == '$') ||
+        (code == 'GBP' && symbol == '£') ||
+        (code == 'GHS' && symbol == '₵');
+    }
+
     function isValidPaymentMethod(val) {
       return val is string && val in ['Bank Transfer', 'POS Terminal', 'Cash', 'Mobile Money'];
     }
@@ -73,20 +80,22 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
-    // Entity Validation Blueprints (Anti-Update-Gap)
+    // Entity Validation Blueprints (Anti-Update-Gap across all 6 Collections)
     // -------------------------------------------------------------------------
     function isValidUserProfile(data) {
       return data.keys().hasAll([
-        'userId', 'name', 'email', 'businessName', 'businessType',
+        'userId', 'businessId', 'name', 'email', 'businessName', 'businessType',
         'rcNumber', 'address', 'phone', 'currencyCode', 'currencySymbol',
         'defaultReorderLevel', 'vatEnabled', 'vatRate', 'createdAt', 'updatedAt'
       ]) && data.keys().hasOnly([
-        'userId', 'name', 'email', 'businessName', 'businessType',
+        'userId', 'businessId', 'name', 'email', 'businessName', 'businessType',
         'rcNumber', 'address', 'phone', 'currencyCode', 'currencySymbol',
         'defaultReorderLevel', 'vatEnabled', 'vatRate', 'createdAt', 'updatedAt'
       ]) &&
       isValidId(data.userId) &&
       data.userId == request.auth.uid &&
+      isValidId(data.businessId) &&
+      data.businessId == request.auth.uid &&
       data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
       data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
       data.businessName is string && data.businessName.size() >= 1 && data.businessName.size() <= 140 &&
@@ -94,8 +103,38 @@ service cloud.firestore {
       data.rcNumber is string && data.rcNumber.size() <= 40 &&
       data.address is string && data.address.size() <= 240 &&
       data.phone is string && data.phone.size() <= 40 &&
-      data.currencyCode is string && data.currencyCode == 'NGN' &&
-      data.currencySymbol is string && data.currencySymbol == '₦' &&
+      data.currencyCode is string && data.currencyCode.size() == 3 &&
+      data.currencySymbol is string && data.currencySymbol.size() >= 1 && data.currencySymbol.size() <= 4 &&
+      isValidCurrency(data.currencyCode, data.currencySymbol) &&
+      data.defaultReorderLevel is number && data.defaultReorderLevel >= 0 && data.defaultReorderLevel <= 100000 &&
+      data.vatEnabled is bool &&
+      data.vatRate is number && data.vatRate >= 0 && data.vatRate <= 100 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidBusinessProfile(data) {
+      return data.keys().hasAll([
+        'businessId', 'userId', 'businessName', 'businessCategory', 'location',
+        'phone', 'currencyCode', 'currencySymbol', 'rcNumber',
+        'defaultReorderLevel', 'vatEnabled', 'vatRate', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'businessId', 'userId', 'businessName', 'businessCategory', 'location',
+        'phone', 'currencyCode', 'currencySymbol', 'rcNumber',
+        'defaultReorderLevel', 'vatEnabled', 'vatRate', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.businessId) &&
+      data.businessId == request.auth.uid &&
+      isValidId(data.userId) &&
+      data.userId == request.auth.uid &&
+      data.businessName is string && data.businessName.size() >= 1 && data.businessName.size() <= 140 &&
+      data.businessCategory is string && data.businessCategory.size() >= 1 && data.businessCategory.size() <= 120 &&
+      data.location is string && data.location.size() <= 240 &&
+      data.phone is string && data.phone.size() <= 40 &&
+      data.currencyCode is string && data.currencyCode.size() == 3 &&
+      data.currencySymbol is string && data.currencySymbol.size() >= 1 && data.currencySymbol.size() <= 4 &&
+      isValidCurrency(data.currencyCode, data.currencySymbol) &&
+      data.rcNumber is string && data.rcNumber.size() <= 40 &&
       data.defaultReorderLevel is number && data.defaultReorderLevel >= 0 && data.defaultReorderLevel <= 100000 &&
       data.vatEnabled is bool &&
       data.vatRate is number && data.vatRate >= 0 && data.vatRate <= 100 &&
@@ -105,20 +144,22 @@ service cloud.firestore {
 
     function isValidSale(data) {
       return data.keys().hasAll([
-        'saleId', 'orderNumber', 'userId', 'productId', 'product',
+        'saleId', 'orderNumber', 'userId', 'businessId', 'productId', 'product',
         'quantity', 'unitPrice', 'totalAmount', 'amountPaid',
-        'customer', 'customerPhone', 'paymentStatus', 'paymentMethod',
-        'date', 'notes', 'createdAt', 'updatedAt'
+        'customerId', 'customer', 'customerPhone', 'paymentStatus', 'paymentMethod',
+        'date', 'notes', 'stockDeductedQty', 'createdAt', 'updatedAt'
       ]) && data.keys().hasOnly([
-        'saleId', 'orderNumber', 'userId', 'productId', 'product',
+        'saleId', 'orderNumber', 'userId', 'businessId', 'productId', 'product',
         'quantity', 'unitPrice', 'totalAmount', 'amountPaid',
-        'customer', 'customerPhone', 'paymentStatus', 'paymentMethod',
-        'date', 'notes', 'createdAt', 'updatedAt'
+        'customerId', 'customer', 'customerPhone', 'paymentStatus', 'paymentMethod',
+        'date', 'notes', 'stockDeductedQty', 'createdAt', 'updatedAt'
       ]) &&
       isValidId(data.saleId) &&
       data.orderNumber is string && data.orderNumber.size() >= 1 && data.orderNumber.size() <= 32 &&
       isValidId(data.userId) &&
       data.userId == request.auth.uid &&
+      isValidId(data.businessId) &&
+      data.businessId == request.auth.uid &&
       data.productId is string && (data.productId.size() == 0 || isValidId(data.productId)) &&
       data.product is string && data.product.size() >= 1 && data.product.size() <= 160 &&
       data.quantity is number && data.quantity > 0 && data.quantity <= 1000000 &&
@@ -130,27 +171,31 @@ service cloud.firestore {
         (data.paymentStatus == 'Pending' && data.amountPaid == 0) ||
         (data.paymentStatus == 'Partial' && data.amountPaid > 0 && data.amountPaid < data.totalAmount)
       ) &&
+      data.customerId is string && (data.customerId.size() == 0 || isValidId(data.customerId)) &&
       data.customer is string && data.customer.size() >= 1 && data.customer.size() <= 140 &&
       data.customerPhone is string && data.customerPhone.size() <= 40 &&
       isValidPaymentStatus(data.paymentStatus) &&
       isValidPaymentMethod(data.paymentMethod) &&
       isIsoDate(data.date) &&
       data.notes is string && data.notes.size() <= 300 &&
+      data.stockDeductedQty is number && data.stockDeductedQty >= 0 && data.stockDeductedQty <= data.quantity &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
     }
 
     function isValidExpense(data) {
       return data.keys().hasAll([
-        'expenseId', 'userId', 'category', 'description', 'vendor',
+        'expenseId', 'userId', 'businessId', 'category', 'description', 'vendor',
         'amount', 'paymentMethod', 'date', 'createdAt', 'updatedAt'
       ]) && data.keys().hasOnly([
-        'expenseId', 'userId', 'category', 'description', 'vendor',
+        'expenseId', 'userId', 'businessId', 'category', 'description', 'vendor',
         'amount', 'paymentMethod', 'date', 'createdAt', 'updatedAt'
       ]) &&
       isValidId(data.expenseId) &&
       isValidId(data.userId) &&
       data.userId == request.auth.uid &&
+      isValidId(data.businessId) &&
+      data.businessId == request.auth.uid &&
       isValidExpenseCategory(data.category) &&
       data.description is string && data.description.size() >= 1 && data.description.size() <= 240 &&
       data.vendor is string && data.vendor.size() >= 1 && data.vendor.size() <= 140 &&
@@ -161,19 +206,21 @@ service cloud.firestore {
       data.updatedAt is timestamp;
     }
 
-    function isValidInventory(data) {
+    function isValidProduct(data) {
       return data.keys().hasAll([
-        'productId', 'userId', 'sku', 'productName', 'category', 'unit',
+        'productId', 'userId', 'businessId', 'sku', 'productName', 'category', 'unit',
         'costPrice', 'sellingPrice', 'quantity', 'lowStockThreshold',
         'createdAt', 'updatedAt'
       ]) && data.keys().hasOnly([
-        'productId', 'userId', 'sku', 'productName', 'category', 'unit',
+        'productId', 'userId', 'businessId', 'sku', 'productName', 'category', 'unit',
         'costPrice', 'sellingPrice', 'quantity', 'lowStockThreshold',
         'createdAt', 'updatedAt'
       ]) &&
       isValidId(data.productId) &&
       isValidId(data.userId) &&
       data.userId == request.auth.uid &&
+      isValidId(data.businessId) &&
+      data.businessId == request.auth.uid &&
       data.sku is string && data.sku.size() >= 1 && data.sku.size() <= 40 &&
       data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 160 &&
       isValidProductCategory(data.category) &&
@@ -186,11 +233,34 @@ service cloud.firestore {
       data.updatedAt is timestamp;
     }
 
+    function isValidCustomer(data) {
+      return data.keys().hasAll([
+        'customerId', 'userId', 'businessId', 'name', 'phone', 'email',
+        'totalOrders', 'totalSpent', 'lastOrderDate', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'customerId', 'userId', 'businessId', 'name', 'phone', 'email',
+        'totalOrders', 'totalSpent', 'lastOrderDate', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.customerId) &&
+      isValidId(data.userId) &&
+      data.userId == request.auth.uid &&
+      isValidId(data.businessId) &&
+      data.businessId == request.auth.uid &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 140 &&
+      data.phone is string && data.phone.size() <= 40 &&
+      data.email is string && data.email.size() <= 160 &&
+      data.totalOrders is number && data.totalOrders >= 0 && data.totalOrders <= 1000000 &&
+      data.totalSpent is number && data.totalSpent >= 0 && data.totalSpent <= 1000000000000 &&
+      isIsoDate(data.lastOrderDate) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
     // -------------------------------------------------------------------------
-    // Collection Rules (Exhaustive Coverage of All 4 Blueprint Collections)
+    // Exhaustive Collection Rules (All 6 Blueprint Collections)
     // -------------------------------------------------------------------------
 
-    // 1. Users (PII-isolated: owner-only get/create/update; no list)
+    // 1. Users (PII-isolated: owner-only get/create/update; no list/delete)
     match /users/{userId} {
       allow get: if isValidId(userId) && isOwner(userId);
       allow list: if false;
@@ -208,18 +278,49 @@ service cloud.firestore {
         isOwner(userId) &&
         isValidUserProfile(incoming()) &&
         incoming().userId == existing().userId &&
+        incoming().businessId == request.auth.uid &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         incoming().diff(existing()).affectedKeys().hasOnly([
-          'name', 'email', 'businessName', 'businessType',
-          'rcNumber', 'address', 'phone',
+          'businessId', 'name', 'email', 'businessName', 'businessType',
+          'rcNumber', 'address', 'phone', 'currencyCode', 'currencySymbol',
           'defaultReorderLevel', 'vatEnabled', 'vatRate', 'updatedAt'
         ]);
 
       allow delete: if false;
     }
 
-    // 2. Sales & Orders (Tenant-scoped, terminal-state locked once Paid)
+    // 2. Businesses (Owner-only business profile; no list/delete)
+    match /businesses/{businessId} {
+      allow get: if isValidId(businessId) && isOwner(businessId);
+      allow list: if false;
+
+      allow create: if isVerifiedUser() &&
+        isValidId(businessId) &&
+        isOwner(businessId) &&
+        isValidBusinessProfile(incoming()) &&
+        incoming().businessId == businessId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(businessId) &&
+        isOwner(businessId) &&
+        isValidBusinessProfile(incoming()) &&
+        incoming().businessId == existing().businessId &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'businessName', 'businessCategory', 'location', 'phone',
+          'currencyCode', 'currencySymbol', 'rcNumber',
+          'defaultReorderLevel', 'vatEnabled', 'vatRate', 'updatedAt'
+        ]);
+
+      allow delete: if false;
+    }
+
+    // 3. Sales (Tenant-scoped with action-based updates: Mark Paid or Owner Edit)
     match /sales/{saleId} {
       allow get: if isSignedIn() && isValidId(saleId) && existing().userId == request.auth.uid;
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
@@ -237,22 +338,32 @@ service cloud.firestore {
         isValidSale(incoming()) &&
         existing().userId == request.auth.uid &&
         incoming().userId == existing().userId &&
+        incoming().businessId == existing().businessId &&
         incoming().saleId == existing().saleId &&
+        incoming().orderNumber == existing().orderNumber &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
-        // Terminal State Lock: settled orders cannot be modified
-        existing().paymentStatus != 'Paid' &&
-        // Action: Mark Pending/Partial order as Paid
         (
-          incoming().paymentStatus == 'Paid' &&
-          incoming().amountPaid == existing().totalAmount &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['paymentStatus', 'amountPaid', 'updatedAt'])
+          // Action 1: Mark Pending/Partial sale as fully Paid
+          (
+            existing().paymentStatus != 'Paid' &&
+            incoming().paymentStatus == 'Paid' &&
+            incoming().amountPaid == existing().totalAmount &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['paymentStatus', 'amountPaid', 'updatedAt'])
+          ) ||
+          // Action 2: Owner edits sale details (with validated stock delta)
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'productId', 'product', 'quantity', 'unitPrice', 'totalAmount',
+            'amountPaid', 'customerId', 'customer', 'customerPhone',
+            'paymentStatus', 'paymentMethod', 'date', 'notes',
+            'stockDeductedQty', 'updatedAt'
+          ])
         );
 
       allow delete: if isVerifiedUser() && isValidId(saleId) && existing().userId == request.auth.uid;
     }
 
-    // 3. Expenses (Tenant-scoped, immutable after creation)
+    // 4. Expenses (Tenant-scoped with owner create, edit, and delete)
     match /expenses/{expenseId} {
       allow get: if isSignedIn() && isValidId(expenseId) && existing().userId == request.auth.uid;
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
@@ -265,19 +376,31 @@ service cloud.firestore {
         incoming().updatedAt == request.time &&
         hasUserProfile();
 
-      allow update: if false;
+      allow update: if isVerifiedUser() &&
+        isValidId(expenseId) &&
+        isValidExpense(incoming()) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().businessId == existing().businessId &&
+        incoming().expenseId == existing().expenseId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'category', 'description', 'vendor', 'amount',
+          'paymentMethod', 'date', 'updatedAt'
+        ]);
 
       allow delete: if isVerifiedUser() && isValidId(expenseId) && existing().userId == request.auth.uid;
     }
 
-    // 4. Inventory (Tenant-scoped, action-based updates)
-    match /inventory/{productId} {
+    // 5. Products (Tenant-scoped inventory catalogue with action-based updates)
+    match /products/{productId} {
       allow get: if isSignedIn() && isValidId(productId) && existing().userId == request.auth.uid;
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
 
       allow create: if isVerifiedUser() &&
         isValidId(productId) &&
-        isValidInventory(incoming()) &&
+        isValidProduct(incoming()) &&
         incoming().productId == productId &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
@@ -285,14 +408,15 @@ service cloud.firestore {
 
       allow update: if isVerifiedUser() &&
         isValidId(productId) &&
-        isValidInventory(incoming()) &&
+        isValidProduct(incoming()) &&
         existing().userId == request.auth.uid &&
         incoming().userId == existing().userId &&
+        incoming().businessId == existing().businessId &&
         incoming().productId == existing().productId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         (
-          // Action 1: Stock quantity adjustment (Restock or Sale deduction)
+          // Action 1: Stock quantity adjustment (Restock or Sale transaction)
           incoming().diff(existing()).affectedKeys().hasOnly(['quantity', 'updatedAt']) ||
           // Action 2: Edit product details
           incoming().diff(existing()).affectedKeys().hasOnly([
@@ -302,6 +426,35 @@ service cloud.firestore {
         );
 
       allow delete: if isVerifiedUser() && isValidId(productId) && existing().userId == request.auth.uid;
+    }
+
+    // 6. Customers (Tenant-scoped customer directory)
+    match /customers/{customerId} {
+      allow get: if isSignedIn() && isValidId(customerId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      allow create: if isVerifiedUser() &&
+        isValidId(customerId) &&
+        isValidCustomer(incoming()) &&
+        incoming().customerId == customerId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        hasUserProfile();
+
+      allow update: if isVerifiedUser() &&
+        isValidId(customerId) &&
+        isValidCustomer(incoming()) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().businessId == existing().businessId &&
+        incoming().customerId == existing().customerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'phone', 'email', 'totalOrders', 'totalSpent', 'lastOrderDate', 'updatedAt'
+        ]);
+
+      allow delete: if isVerifiedUser() && isValidId(customerId) && existing().userId == request.auth.uid;
     }
   }
 }

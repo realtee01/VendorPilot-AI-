@@ -1,4 +1,5 @@
 import {
+  DashboardPeriod,
   Expense,
   ExpenseCategory,
   PaymentStatus,
@@ -16,6 +17,7 @@ export interface DashboardMetrics {
   outstandingPayments: number;
   unpaidOrderCount: number;
   totalOrders: number;
+  totalProducts: number;
   lowStockCount: number;
   outOfStockCount: number;
   inventoryValuation: number;
@@ -43,21 +45,21 @@ export interface ExpenseCategorySummary {
   sharePct: number;
 }
 
-export function formatNaira(amount: number, compact = false): string {
+export function formatNaira(amount: number, compact = false, symbol = '₦'): string {
   const safe = Number.isFinite(amount) ? amount : 0;
   const sign = safe < 0 ? '-' : '';
   const abs = Math.abs(safe);
 
   if (compact) {
     if (abs >= 1_000_000) {
-      return `${sign}₦${(abs / 1_000_000).toFixed(1)}M`;
+      return `${sign}${symbol}${(abs / 1_000_000).toFixed(1)}M`;
     }
     if (abs >= 1_000) {
-      return `${sign}₦${(abs / 1_000).toFixed(0)}k`;
+      return `${sign}${symbol}${(abs / 1_000).toFixed(0)}k`;
     }
   }
 
-  return `${sign}₦${Math.round(abs).toLocaleString('en-NG')}`;
+  return `${sign}${symbol}${Math.round(abs).toLocaleString('en-NG')}`;
 }
 
 export function formatShortDate(isoDate: string): string {
@@ -114,6 +116,7 @@ export function calculateDashboardMetrics(
     outstandingPayments,
     unpaidOrderCount,
     totalOrders: sales.length,
+    totalProducts: products.length,
     lowStockCount,
     outOfStockCount,
     inventoryValuation,
@@ -351,4 +354,118 @@ export function validateProductInput(input: {
     errors.reorderLevel = 'Reorder threshold cannot be negative.';
   }
   return { valid: Object.keys(errors).length === 0, errors };
+}
+
+export function filterRecordsByPeriod(
+  sales: SaleOrder[],
+  expenses: Expense[],
+  period: DashboardPeriod,
+  referenceIsoDate = new Date().toISOString().slice(0, 10)
+): {
+  sales: SaleOrder[];
+  expenses: Expense[];
+  periodLabel: string;
+} {
+  if (period === 'all') {
+    return { sales, expenses, periodLabel: 'All Recorded History' };
+  }
+
+  const today = parseUtcDate(referenceIsoDate);
+  const todayIso = toIsoDate(today);
+
+  if (period === 'daily') {
+    return {
+      sales: sales.filter((s) => s.date === todayIso),
+      expenses: expenses.filter((e) => e.date === todayIso),
+      periodLabel: `Today (${formatShortDate(todayIso)})`,
+    };
+  }
+
+  if (period === 'weekly') {
+    const start = new Date(today.getTime() - 6 * 86_400_000);
+    const startIso = toIsoDate(start);
+    return {
+      sales: sales.filter((s) => s.date >= startIso && s.date <= todayIso),
+      expenses: expenses.filter((e) => e.date >= startIso && e.date <= todayIso),
+      periodLabel: `Last 7 Days (${formatShortDate(startIso)} – ${formatShortDate(todayIso)})`,
+    };
+  }
+
+  // Monthly (Current Calendar Month MTD)
+  const monthPrefix = todayIso.slice(0, 7);
+  const monthLabel = today.toLocaleDateString('en-GB', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+  return {
+    sales: sales.filter((s) => s.date.startsWith(monthPrefix)),
+    expenses: expenses.filter((e) => e.date.startsWith(monthPrefix)),
+    periodLabel: `${monthLabel} (Month-to-Date)`,
+  };
+}
+
+export interface StockAdjustmentPlan {
+  productId: string;
+  nextStock: number;
+  deductedForSale: number;
+}
+
+/**
+ * Pure calculation for atomic stock adjustments when recording or editing a sale.
+ * Computes exact net deltas so edits and retries never double-deduct inventory.
+ */
+export function computeSaleStockDelta(params: {
+  previousProductId: string | null;
+  previousDeductedQty: number;
+  nextProductId: string | null;
+  nextQuantity: number;
+  currentStockByProductId: Record<string, number>;
+}): {
+  adjustments: Record<string, number>;
+  nextStockDeductedQty: number;
+} {
+  const {
+    previousProductId,
+    previousDeductedQty,
+    nextProductId,
+    nextQuantity,
+    currentStockByProductId,
+  } = params;
+
+  const adjustments: Record<string, number> = {};
+  const safePrevDeducted = Math.max(0, Math.round(previousDeductedQty));
+  const safeNextQty = Math.max(0, Math.round(nextQuantity));
+
+  // Case 1: Same product (or editing quantity on same linked product)
+  if (previousProductId && nextProductId && previousProductId === nextProductId) {
+    if (previousProductId in currentStockByProductId) {
+      const current = Math.max(0, currentStockByProductId[previousProductId]);
+      const delta = safeNextQty - safePrevDeducted; // >0 deduct more, <0 restore excess
+      const actualChange = delta > 0 ? Math.min(current, delta) : delta;
+      const nextStock = Math.max(0, current - actualChange);
+      if (nextStock !== current) {
+        adjustments[previousProductId] = nextStock;
+      }
+      const nextDeducted = Math.max(0, Math.min(safeNextQty, safePrevDeducted + actualChange));
+      return { adjustments, nextStockDeductedQty: nextDeducted };
+    }
+    return { adjustments, nextStockDeductedQty: 0 };
+  }
+
+  // Case 2: Different products (restore old product if present, deduct new product if present)
+  if (previousProductId && safePrevDeducted > 0 && previousProductId in currentStockByProductId) {
+    const oldCurrent = Math.max(0, currentStockByProductId[previousProductId]);
+    adjustments[previousProductId] = oldCurrent + safePrevDeducted;
+  }
+
+  let nextStockDeductedQty = 0;
+  if (nextProductId && safeNextQty > 0 && nextProductId in currentStockByProductId) {
+    const newCurrent = Math.max(0, currentStockByProductId[nextProductId]);
+    const deducted = Math.min(newCurrent, safeNextQty);
+    adjustments[nextProductId] = Math.max(0, newCurrent - deducted);
+    nextStockDeductedQty = deducted;
+  }
+
+  return { adjustments, nextStockDeductedQty };
 }

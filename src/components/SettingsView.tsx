@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Download, LogOut } from 'lucide-react';
 import { BusinessSettings } from '../types/business';
+import { CURRENCY_OPTIONS, getCurrencySymbol } from '../data/constants';
 import { useBusiness } from '../context/BusinessContext';
 import { formatShortDate } from '../utils/analytics';
 
@@ -215,15 +216,27 @@ export function SettingsView() {
           <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div>
               <label htmlFor="set-currency" className="block text-xs font-medium text-slate-700">
-                Reporting Currency
+                Business Currency
               </label>
-              <input
+              <select
                 id="set-currency"
-                type="text"
-                readOnly
-                value="Nigerian Naira (NGN · ₦)"
-                className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600"
-              />
+                value={form.currencyCode}
+                onChange={(e) => {
+                  const code = e.target.value as BusinessSettings['currencyCode'];
+                  setForm({
+                    ...form,
+                    currencyCode: code,
+                    currencySymbol: getCurrencySymbol(code),
+                  });
+                }}
+                className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
+              >
+                {CURRENCY_OPTIONS.map((opt) => (
+                  <option key={opt.code} value={opt.code}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div>

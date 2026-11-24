@@ -1,4 +1,26 @@
-import { ExpenseCategory, PaymentMethod, ProductCategory } from '../types/business';
+import {
+  CurrencyCode,
+  CurrencySymbol,
+  ExpenseCategory,
+  PaymentMethod,
+  ProductCategory,
+} from '../types/business';
+
+export const CURRENCY_OPTIONS: Array<{
+  code: CurrencyCode;
+  symbol: CurrencySymbol;
+  label: string;
+}> = [
+  { code: 'NGN', symbol: '₦', label: 'Nigerian Naira (NGN · ₦)' },
+  { code: 'USD', symbol: '$', label: 'US Dollar (USD · $)' },
+  { code: 'GBP', symbol: '£', label: 'British Pound (GBP · £)' },
+  { code: 'GHS', symbol: '₵', label: 'Ghanaian Cedi (GHS · ₵)' },
+];
+
+export function getCurrencySymbol(code: CurrencyCode): CurrencySymbol {
+  const found = CURRENCY_OPTIONS.find((opt) => opt.code === code);
+  return found ? found.symbol : '₦';
+}
 
 export const PRODUCT_CATEGORIES: ProductCategory[] = [
   'Grains & Staples',

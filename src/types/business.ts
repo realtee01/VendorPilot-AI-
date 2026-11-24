@@ -12,6 +12,11 @@ export type PaymentMethod = 'Bank Transfer' | 'POS Terminal' | 'Cash' | 'Mobile 
 
 export type SalesRange = '7d' | '30d' | '6m';
 
+export type DashboardPeriod = 'daily' | 'weekly' | 'monthly' | 'all';
+
+export type CurrencyCode = 'NGN' | 'USD' | 'GBP' | 'GHS';
+export type CurrencySymbol = '₦' | '$' | '£' | '₵';
+
 export type ExpenseCategory =
   | 'Inventory Restock'
   | 'Logistics & Delivery'
@@ -29,8 +34,9 @@ export type ProductCategory =
   | 'Household Essentials';
 
 export interface Product {
-  id: string; // Firestore productId
+  id: string; // Firestore productId in /products/{productId}
   userId: string;
+  businessId?: string;
   sku: string;
   name: string; // Firestore productName
   category: ProductCategory;
@@ -42,10 +48,23 @@ export interface Product {
   updatedAt: string;
 }
 
+export interface Customer {
+  id: string; // Firestore customerId in /customers/{customerId}
+  userId: string;
+  businessId: string;
+  name: string;
+  phone: string;
+  email: string;
+  totalOrders: number;
+  totalSpent: number;
+  lastOrderDate: string;
+}
+
 export interface SaleOrder {
-  id: string; // Firestore saleId
+  id: string; // Firestore saleId in /sales/{saleId}
   orderNumber: string;
   userId: string;
+  businessId?: string;
   date: string; // YYYY-MM-DD
   productId: string | null;
   productName: string; // Firestore product
@@ -53,17 +72,20 @@ export interface SaleOrder {
   unitPrice: number;
   totalAmount: number;
   amountPaid: number;
+  customerId?: string | null;
   customerName: string; // Firestore customer
   customerPhone: string;
   paymentStatus: PaymentStatus;
   paymentMethod: PaymentMethod;
   notes?: string;
+  stockDeductedQty?: number;
   createdAtMs?: number;
 }
 
 export interface Expense {
-  id: string; // Firestore expenseId
+  id: string; // Firestore expenseId in /expenses/{expenseId}
   userId: string;
+  businessId?: string;
   date: string; // YYYY-MM-DD
   category: ExpenseCategory;
   description: string;
@@ -75,15 +97,16 @@ export interface Expense {
 
 export interface BusinessSettings {
   userId: string;
+  businessId?: string;
   businessName: string;
   ownerName: string;
-  businessType: string;
+  businessType: string; // Business category
   rcNumber: string;
-  address: string;
+  address: string; // Business location
   phone: string;
   email: string;
-  currencyCode: 'NGN';
-  currencySymbol: '₦';
+  currencyCode: CurrencyCode;
+  currencySymbol: CurrencySymbol;
   defaultReorderLevel: number;
   vatEnabled: boolean;
   vatRate: number;
@@ -102,5 +125,6 @@ export interface BusinessState {
   products: Product[];
   sales: SaleOrder[];
   expenses: Expense[];
+  customers: Customer[];
   settings: BusinessSettings;
 }

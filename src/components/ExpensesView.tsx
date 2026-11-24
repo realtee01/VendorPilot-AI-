@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
-import { Search, Trash2 } from 'lucide-react';
-import { ExpenseCategory, PaymentMethod } from '../types/business';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Search, Trash2, Pencil } from 'lucide-react';
+import { Expense, ExpenseCategory, PaymentMethod } from '../types/business';
 import { EXPENSE_CATEGORIES, getTodayIsoDate, PAYMENT_METHODS } from '../data/constants';
 import { useBusiness } from '../context/BusinessContext';
 import { formatNaira, formatShortDate, validateExpenseInput } from '../utils/analytics';
@@ -13,14 +13,19 @@ interface ExpensesViewProps {
 }
 
 export function ExpensesView({ isModalOpen, onOpenModal, onCloseModal }: ExpensesViewProps) {
-  const { state, metrics, expenseByCategory, recordExpense, deleteExpense } = useBusiness();
+  const { state, metrics, expenseByCategory, recordExpense, updateExpense, deleteExpense } =
+    useBusiness();
+  const symbol = state.settings.currencySymbol || '₦';
+
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'All' | ExpenseCategory>('All');
   const [feedback, setFeedback] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Record Expense form state
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+
+  // Record / Edit Expense form state
   const [category, setCategory] = useState<ExpenseCategory>('Logistics & Delivery');
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
@@ -28,6 +33,21 @@ export function ExpensesView({ isModalOpen, onOpenModal, onCloseModal }: Expense
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Bank Transfer');
   const [date, setDate] = useState(() => getTodayIsoDate());
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+
+  const modalVisible = isModalOpen || editingExpense !== null;
+
+  useEffect(() => {
+    if (isModalOpen && !editingExpense) {
+      setCategory('Logistics & Delivery');
+      setAmount('');
+      setDescription('');
+      setVendor('');
+      setPaymentMethod('Bank Transfer');
+      setDate(getTodayIsoDate());
+      setFormErrors({});
+      setSubmitError(null);
+    }
+  }, [isModalOpen, editingExpense]);
 
   const filteredExpenses = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -44,18 +64,20 @@ export function ExpensesView({ isModalOpen, onOpenModal, onCloseModal }: Expense
 
   const topCategory = expenseByCategory[0] ?? null;
 
-  const resetForm = () => {
-    setCategory('Logistics & Delivery');
-    setAmount('');
-    setDescription('');
-    setVendor('');
-    setPaymentMethod('Bank Transfer');
-    setDate(getTodayIsoDate());
+  const openEditModal = (exp: Expense) => {
+    setEditingExpense(exp);
+    setCategory(exp.category);
+    setAmount(String(exp.amount));
+    setDescription(exp.description);
+    setVendor(exp.vendor);
+    setPaymentMethod(exp.paymentMethod);
+    setDate(exp.date);
     setFormErrors({});
     setSubmitError(null);
   };
 
   const handleClose = () => {
+    setEditingExpense(null);
     setFormErrors({});
     setSubmitError(null);
     onCloseModal();
@@ -63,6 +85,8 @@ export function ExpensesView({ isModalOpen, onOpenModal, onCloseModal }: Expense
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
+
     const numAmount = Number(amount);
     const validation = validateExpenseInput({
       description,
@@ -79,18 +103,31 @@ export function ExpensesView({ isModalOpen, onOpenModal, onCloseModal }: Expense
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const created = await recordExpense({
-        date,
-        category,
-        description,
-        vendor,
-        amount: numAmount,
-        paymentMethod,
-      });
+      if (editingExpense) {
+        await updateExpense(editingExpense.id, {
+          date,
+          category,
+          description,
+          vendor,
+          amount: numAmount,
+          paymentMethod,
+        });
+        setFeedback(`Updated expense "${description.trim()}" in Cloud Firestore.`);
+      } else {
+        const created = await recordExpense({
+          date,
+          category,
+          description,
+          vendor,
+          amount: numAmount,
+          paymentMethod,
+        });
+        setFeedback(
+          `Recorded ${created.category} expense of ${formatNaira(created.amount, false, symbol)}.`
+        );
+      }
 
-      setFeedback(`Recorded ${created.category} expense of ${formatNaira(created.amount)}.`);
-      resetForm();
-      onCloseModal();
+      handleClose();
     } catch {
       setSubmitError('Unable to save expense right now. Please try again.');
     } finally {
@@ -101,6 +138,7 @@ export function ExpensesView({ isModalOpen, onOpenModal, onCloseModal }: Expense
   const handleDelete = async (expenseId: string) => {
     try {
       await deleteExpense(expenseId);
+      setFeedback('Deleted expense record from Cloud Firestore.');
     } catch {
       setFeedback('Could not delete expense entry. Please try again.');
     }
@@ -129,7 +167,7 @@ export function ExpensesView({ isModalOpen, onOpenModal, onCloseModal }: Expense
         <div className="rounded-xl border border-slate-200 bg-white p-5">
           <p className="text-sm font-medium text-slate-500">Total Operating Expenses</p>
           <p className="mt-1.5 font-mono text-2xl font-semibold text-slate-900 tabular-nums">
-            {formatNaira(metrics.totalExpenses)}
+            {formatNaira(metrics.totalExpenses, false, symbol)}
           </p>
           <p className="mt-1 text-xs text-slate-500">
             {state.expenses.length} recorded transaction{state.expenses.length === 1 ? '' : 's'}
@@ -142,7 +180,7 @@ export function ExpensesView({ isModalOpen, onOpenModal, onCloseModal }: Expense
           </p>
           <p className="mt-1 font-mono text-xs text-slate-500 tabular-nums">
             {topCategory
-              ? `${formatNaira(topCategory.total)} (${topCategory.sharePct}% of total spend)`
+              ? `${formatNaira(topCategory.total, false, symbol)} (${topCategory.sharePct}% of total spend)`
               : 'Log your first operating cost'}
           </p>
         </div>
@@ -193,7 +231,7 @@ export function ExpensesView({ isModalOpen, onOpenModal, onCloseModal }: Expense
                       {item.category}
                     </span>
                     <span className="shrink-0 font-mono text-xs font-semibold text-slate-900 tabular-nums">
-                      {formatNaira(item.total)}
+                      {formatNaira(item.total, false, symbol)}
                     </span>
                   </div>
                   <div className="mt-1.5 flex items-center gap-2.5">
@@ -285,7 +323,7 @@ export function ExpensesView({ isModalOpen, onOpenModal, onCloseModal }: Expense
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[740px] border-collapse text-left text-sm">
+            <table className="w-full min-w-[760px] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/70 text-xs font-medium text-slate-500">
                   <th className="py-3 pr-3 pl-6 font-medium">Date</th>
@@ -293,7 +331,7 @@ export function ExpensesView({ isModalOpen, onOpenModal, onCloseModal }: Expense
                   <th className="px-3 py-3 font-medium">Category</th>
                   <th className="px-3 py-3 font-medium">Payment Channel</th>
                   <th className="px-3 py-3 text-right font-medium">Amount</th>
-                  <th className="py-3 pr-6 pl-3 text-right font-medium">Action</th>
+                  <th className="py-3 pr-6 pl-3 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -313,17 +351,27 @@ export function ExpensesView({ isModalOpen, onOpenModal, onCloseModal }: Expense
                       {exp.paymentMethod}
                     </td>
                     <td className="px-3 py-3.5 text-right align-top font-mono text-sm font-semibold text-slate-900 tabular-nums">
-                      {formatNaira(exp.amount)}
+                      {formatNaira(exp.amount, false, symbol)}
                     </td>
                     <td className="py-3.5 pr-6 pl-3 text-right align-top">
-                      <button
-                        type="button"
-                        onClick={() => void handleDelete(exp.id)}
-                        aria-label={`Delete expense ${exp.description}`}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      <div className="inline-flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(exp)}
+                          aria-label={`Edit expense ${exp.description}`}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDelete(exp.id)}
+                          aria-label={`Delete expense ${exp.description}`}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -333,12 +381,16 @@ export function ExpensesView({ isModalOpen, onOpenModal, onCloseModal }: Expense
         )}
       </section>
 
-      {/* Record Expense Modal */}
+      {/* Record / Edit Expense Modal */}
       <Modal
-        isOpen={isModalOpen}
+        isOpen={modalVisible}
         onClose={handleClose}
-        title="Record Expense"
-        subtitle="Log an operating cost directly to your Cloud Firestore ledger."
+        title={editingExpense ? 'Edit Expense' : 'Record Expense'}
+        subtitle={
+          editingExpense
+            ? 'Update this operational expense in Cloud Firestore.'
+            : 'Log an operating cost directly to your Cloud Firestore ledger.'
+        }
       >
         <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4" noValidate>
           {submitError && (
@@ -368,7 +420,7 @@ export function ExpensesView({ isModalOpen, onOpenModal, onCloseModal }: Expense
 
             <div>
               <label htmlFor="exp-amount" className="block text-xs font-medium text-slate-700">
-                Amount (₦)
+                Amount ({symbol})
               </label>
               <input
                 id="exp-amount"
@@ -464,7 +516,7 @@ export function ExpensesView({ isModalOpen, onOpenModal, onCloseModal }: Expense
               disabled={submitting}
               className="h-10 rounded-lg bg-emerald-600 px-5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
             >
-              {submitting ? 'Saving...' : 'Save Expense'}
+              {submitting ? 'Saving...' : editingExpense ? 'Update Expense' : 'Save Expense'}
             </button>
           </div>
         </form>

@@ -4,6 +4,8 @@ import {
   applyNewSaleToInventory,
   buildSalesPerformanceSeries,
   calculateDashboardMetrics,
+  computeSaleStockDelta,
+  filterRecordsByPeriod,
   formatNaira,
   getExpenseByCategory,
   getLowStockProducts,
@@ -148,6 +150,7 @@ test('calculateDashboardMetrics accurately aggregates revenue, expenses, profit,
   assert.equal(metrics.netProfit, 349500);
   assert.equal(metrics.outstandingPayments, 172000);
   assert.equal(metrics.unpaidOrderCount, 2);
+  assert.equal(metrics.totalProducts, 3);
   assert.equal(metrics.outOfStockCount, 1);
   assert.equal(metrics.lowStockCount, 2);
 });
@@ -230,4 +233,76 @@ test('form validators reject invalid inputs and accept valid inputs', () => {
     reorderLevel: -1,
   });
   assert.equal(badProduct.valid, false);
+});
+
+test('filterRecordsByPeriod slices daily, weekly, monthly, and all-time records accurately', () => {
+  const extendedSales: SaleOrder[] = [
+    ...FIXTURE_SALES,
+    {
+      ...FIXTURE_SALES[0],
+      id: 'sale-prev-month',
+      orderNumber: 'VP-0999',
+      date: '2026-10-12',
+    },
+  ];
+
+  const daily = filterRecordsByPeriod(extendedSales, FIXTURE_EXPENSES, 'daily', '2026-11-24');
+  assert.equal(daily.sales.length, 1);
+  assert.equal(daily.expenses.length, 1);
+
+  const weekly = filterRecordsByPeriod(extendedSales, FIXTURE_EXPENSES, 'weekly', '2026-11-24');
+  assert.equal(weekly.sales.length, 3);
+  assert.equal(weekly.expenses.length, 2);
+
+  const monthly = filterRecordsByPeriod(extendedSales, FIXTURE_EXPENSES, 'monthly', '2026-11-24');
+  assert.equal(monthly.sales.length, 3);
+
+  const all = filterRecordsByPeriod(extendedSales, FIXTURE_EXPENSES, 'all', '2026-11-24');
+  assert.equal(all.sales.length, 4);
+});
+
+test('computeSaleStockDelta adjusts inventory by net delta without duplicate deductions', () => {
+  // Same quantity re-save -> zero stock change (no duplicate deduction)
+  const unchanged = computeSaleStockDelta({
+    previousProductId: 'prod-1',
+    previousDeductedQty: 5,
+    nextProductId: 'prod-1',
+    nextQuantity: 5,
+    currentStockByProductId: { 'prod-1': 17 },
+  });
+  assert.deepEqual(unchanged.adjustments, {});
+  assert.equal(unchanged.nextStockDeductedQty, 5);
+
+  // Increasing sale qty from 5 -> 8 deducts only +3 more units
+  const increased = computeSaleStockDelta({
+    previousProductId: 'prod-1',
+    previousDeductedQty: 5,
+    nextProductId: 'prod-1',
+    nextQuantity: 8,
+    currentStockByProductId: { 'prod-1': 17 },
+  });
+  assert.deepEqual(increased.adjustments, { 'prod-1': 14 });
+  assert.equal(increased.nextStockDeductedQty, 8);
+
+  // Decreasing sale qty from 5 -> 2 restores 3 units
+  const decreased = computeSaleStockDelta({
+    previousProductId: 'prod-1',
+    previousDeductedQty: 5,
+    nextProductId: 'prod-1',
+    nextQuantity: 2,
+    currentStockByProductId: { 'prod-1': 17 },
+  });
+  assert.deepEqual(decreased.adjustments, { 'prod-1': 20 });
+  assert.equal(decreased.nextStockDeductedQty, 2);
+
+  // Switching linked product restores old product and deducts new product
+  const switched = computeSaleStockDelta({
+    previousProductId: 'prod-1',
+    previousDeductedQty: 5,
+    nextProductId: 'prod-2',
+    nextQuantity: 4,
+    currentStockByProductId: { 'prod-1': 17, 'prod-2': 6 },
+  });
+  assert.deepEqual(switched.adjustments, { 'prod-1': 22, 'prod-2': 2 });
+  assert.equal(switched.nextStockDeductedQty, 4);
 });

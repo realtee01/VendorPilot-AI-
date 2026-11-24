@@ -3,6 +3,7 @@ import { NavSection, Product } from './types/business';
 import { BusinessProvider, useBusiness } from './context/BusinessContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AuthView } from './components/AuthView';
+import { EmailVerificationView } from './components/EmailVerificationView';
 import { OnboardingView } from './components/OnboardingView';
 import { Layout } from './components/Layout';
 import { DashboardView } from './components/DashboardView';
@@ -36,8 +37,15 @@ function WorkspaceLoadingScreen({ label }: { label: string }) {
 }
 
 function VendorPilotShell() {
-  const { authReady, user, profileLoading, profileExists, dataLoading, restockProduct } =
-    useBusiness();
+  const {
+    authReady,
+    user,
+    emailVerified,
+    profileLoading,
+    profileExists,
+    dataLoading,
+    restockProduct,
+  } = useBusiness();
   const [activeSection, setActiveSection] = useState<NavSection>('dashboard');
   const [saleModalOpen, setSaleModalOpen] = useState(false);
   const [expenseModalOpen, setExpenseModalOpen] = useState(false);
@@ -55,6 +63,10 @@ function VendorPilotShell() {
 
   if (!user) {
     return <AuthView />;
+  }
+
+  if (!emailVerified) {
+    return <EmailVerificationView />;
   }
 
   if (profileLoading) {

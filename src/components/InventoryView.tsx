@@ -23,6 +23,7 @@ export function InventoryView({
   onRequestRestock,
 }: InventoryViewProps) {
   const { state, metrics, addProduct, updateProduct, deleteProduct } = useBusiness();
+  const currencySymbol = state.settings.currencySymbol || '₦';
   const [search, setSearch] = useState('');
   const [stockFilter, setStockFilter] = useState<StockFilter>('All');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -167,7 +168,7 @@ export function InventoryView({
         <div className="rounded-xl border border-slate-200 bg-white p-5">
           <p className="text-sm font-medium text-slate-500">Retail Stock Value</p>
           <p className="mt-1.5 font-mono text-2xl font-semibold text-slate-900 tabular-nums">
-            {formatNaira(metrics.inventoryValuation)}
+            {formatNaira(metrics.inventoryValuation, false, currencySymbol)}
           </p>
           <p className="mt-1 text-xs text-slate-500">Valued at current selling price</p>
         </div>
@@ -289,10 +290,10 @@ export function InventoryView({
                         {product.category}
                       </td>
                       <td className="px-3 py-3.5 text-right align-top font-mono text-xs text-slate-600 tabular-nums">
-                        {formatNaira(product.costPrice)}
+                        {formatNaira(product.costPrice, false, currencySymbol)}
                       </td>
                       <td className="px-3 py-3.5 text-right align-top font-mono text-sm font-medium text-slate-900 tabular-nums">
-                        {formatNaira(product.unitPrice)}
+                        {formatNaira(product.unitPrice, false, currencySymbol)}
                       </td>
                       <td className="px-3 py-3.5 text-right align-top font-mono text-xs text-emerald-700 tabular-nums">
                         {marginPct}%
@@ -424,7 +425,7 @@ export function InventoryView({
 
             <div>
               <label htmlFor="prod-cost" className="block text-xs font-medium text-slate-700">
-                Cost Price (₦)
+                Cost Price ({currencySymbol})
               </label>
               <input
                 id="prod-cost"
@@ -443,7 +444,7 @@ export function InventoryView({
 
             <div>
               <label htmlFor="prod-price" className="block text-xs font-medium text-slate-700">
-                Selling Price (₦)
+                Selling Price ({currencySymbol})
               </label>
               <input
                 id="prod-price"

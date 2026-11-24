@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AlertCircle, LogOut } from 'lucide-react';
-import { BUSINESS_TYPE_SUGGESTIONS } from '../data/constants';
+import { CurrencyCode } from '../types/business';
+import { BUSINESS_TYPE_SUGGESTIONS, CURRENCY_OPTIONS } from '../data/constants';
 import { useBusiness } from '../context/BusinessContext';
 
 export function OnboardingView() {
@@ -10,13 +11,14 @@ export function OnboardingView() {
   const [businessType, setBusinessType] = useState(BUSINESS_TYPE_SUGGESTIONS[0]);
   const [address, setAddress] = useState('');
   const [phone, setPhone] = useState('');
+  const [currencyCode, setCurrencyCode] = useState<CurrencyCode>('NGN');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !businessName.trim() || !businessType.trim()) {
-      setError('Please enter your name, business name, and business type.');
+      setError('Please enter your name, business name, and business category.');
       return;
     }
 
@@ -29,6 +31,7 @@ export function OnboardingView() {
         businessType: businessType.trim(),
         address: address.trim(),
         phone: phone.trim(),
+        currencyCode,
       });
     } catch (err: unknown) {
       setError(
@@ -75,10 +78,10 @@ export function OnboardingView() {
             Signed in as <span className="font-medium text-slate-700">{user?.email}</span>
           </p>
           <h1 className="mt-1 font-display text-xl font-semibold text-slate-900">
-            Set up your business workspace
+            Create your business profile
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Tell us about your business so we can initialize your private Cloud Firestore ledger.
+            Enter your business details to initialize your private Cloud Firestore workspace.
           </p>
 
           {error && (
@@ -124,28 +127,48 @@ export function OnboardingView() {
               />
             </div>
 
-            <div>
-              <label htmlFor="onb-biz-type" className="block text-xs font-medium text-slate-700">
-                Business Type
-              </label>
-              <select
-                id="onb-biz-type"
-                value={businessType}
-                onChange={(e) => setBusinessType(e.target.value)}
-                className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
-              >
-                {BUSINESS_TYPE_SUGGESTIONS.map((type) => (
-                  <option key={type} value={type}>
-                    {type}
-                  </option>
-                ))}
-              </select>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="onb-biz-type" className="block text-xs font-medium text-slate-700">
+                  Business Category
+                </label>
+                <select
+                  id="onb-biz-type"
+                  value={businessType}
+                  onChange={(e) => setBusinessType(e.target.value)}
+                  className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
+                >
+                  {BUSINESS_TYPE_SUGGESTIONS.map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="onb-currency" className="block text-xs font-medium text-slate-700">
+                  Business Currency
+                </label>
+                <select
+                  id="onb-currency"
+                  value={currencyCode}
+                  onChange={(e) => setCurrencyCode(e.target.value as CurrencyCode)}
+                  className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
+                >
+                  {CURRENCY_OPTIONS.map((opt) => (
+                    <option key={opt.code} value={opt.code}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label htmlFor="onb-phone" className="block text-xs font-medium text-slate-700">
-                  Business Phone (Optional)
+                  Business Phone Number
                 </label>
                 <input
                   id="onb-phone"
@@ -160,7 +183,7 @@ export function OnboardingView() {
 
               <div>
                 <label htmlFor="onb-address" className="block text-xs font-medium text-slate-700">
-                  Location / Address (Optional)
+                  Business Location
                 </label>
                 <input
                   id="onb-address"

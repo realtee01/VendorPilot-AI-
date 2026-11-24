@@ -2,7 +2,7 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Authenticated SME business owner profile and operational configuration stored per user.",
+      "description": "Authenticated SME business owner profile and session preferences stored per Firebase Auth UID.",
       "type": "object",
       "properties": {
         "userId": {
@@ -11,6 +11,13 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$",
           "description": "Firebase Auth UID matching the document ID."
+        },
+        "businessId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Primary Business profile document ID owned by this user."
         },
         "name": {
           "type": "string",
@@ -35,7 +42,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 120,
-          "description": "Business sector or category (e.g., FMCG Wholesale, Retail Provision Store)."
+          "description": "Business category or sector."
         },
         "rcNumber": {
           "type": "string",
@@ -47,23 +54,23 @@
           "type": "string",
           "minLength": 0,
           "maxLength": 240,
-          "description": "Store or office street address."
+          "description": "Business location or street address."
         },
         "phone": {
           "type": "string",
           "minLength": 0,
           "maxLength": 40,
-          "description": "Business contact phone number."
+          "description": "Business phone number."
         },
         "currencyCode": {
           "type": "string",
-          "enum": ["NGN"],
-          "description": "ISO currency code."
+          "enum": ["NGN", "USD", "GBP", "GHS"],
+          "description": "ISO currency code (default NGN)."
         },
         "currencySymbol": {
           "type": "string",
-          "enum": ["₦"],
-          "description": "Currency symbol."
+          "enum": ["₦", "$", "£", "₵"],
+          "description": "Currency symbol (default ₦)."
         },
         "defaultReorderLevel": {
           "type": "number",
@@ -90,6 +97,7 @@
       },
       "required": [
         "userId",
+        "businessId",
         "name",
         "email",
         "businessName",
@@ -106,9 +114,108 @@
         "updatedAt"
       ]
     },
+    "BusinessProfile": {
+      "title": "BusinessProfile",
+      "description": "SME business profile document owned by an authenticated user.",
+      "type": "object",
+      "properties": {
+        "businessId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Business document ID matching the owner UID."
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owner Firebase Auth UID."
+        },
+        "businessName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140,
+          "description": "Business name."
+        },
+        "businessCategory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Business category or industry."
+        },
+        "location": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 240,
+          "description": "Business city or physical address."
+        },
+        "phone": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 40,
+          "description": "Business contact phone number."
+        },
+        "currencyCode": {
+          "type": "string",
+          "enum": ["NGN", "USD", "GBP", "GHS"],
+          "description": "ISO currency code (default NGN)."
+        },
+        "currencySymbol": {
+          "type": "string",
+          "enum": ["₦", "$", "£", "₵"],
+          "description": "Currency symbol (default ₦)."
+        },
+        "rcNumber": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 40,
+          "description": "Optional CAC registration number."
+        },
+        "defaultReorderLevel": {
+          "type": "number",
+          "description": "Default low-stock threshold."
+        },
+        "vatEnabled": {
+          "type": "boolean",
+          "description": "VAT toggle."
+        },
+        "vatRate": {
+          "type": "number",
+          "description": "VAT percentage."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated."
+        }
+      },
+      "required": [
+        "businessId",
+        "userId",
+        "businessName",
+        "businessCategory",
+        "location",
+        "phone",
+        "currencyCode",
+        "currencySymbol",
+        "rcNumber",
+        "defaultReorderLevel",
+        "vatEnabled",
+        "vatRate",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
     "SaleRecord": {
       "title": "SaleRecord",
-      "description": "Customer sales order associated with an authenticated business owner.",
+      "description": "Customer sales transaction associated with an authenticated user.",
       "type": "object",
       "properties": {
         "saleId": {
@@ -122,7 +229,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 32,
-          "description": "Human-readable order code (e.g., VP-2615)."
+          "description": "Human-readable order code (e.g., VP-1001)."
         },
         "userId": {
           "type": "string",
@@ -131,11 +238,18 @@
           "pattern": "^[a-zA-Z0-9_\\-]+$",
           "description": "Owner Firebase Auth UID."
         },
+        "businessId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Associated business document ID."
+        },
         "productId": {
           "type": "string",
           "minLength": 0,
           "maxLength": 128,
-          "description": "Optional linked Inventory Product ID, or empty string for custom items."
+          "description": "Optional linked Product ID, or empty string for custom items."
         },
         "product": {
           "type": "string",
@@ -149,15 +263,21 @@
         },
         "unitPrice": {
           "type": "number",
-          "description": "Selling price per unit in NGN (must be > 0)."
+          "description": "Selling price per unit (must be > 0)."
         },
         "totalAmount": {
           "type": "number",
-          "description": "Total order value in NGN (quantity * unitPrice)."
+          "description": "Total order value (quantity * unitPrice)."
         },
         "amountPaid": {
           "type": "number",
-          "description": "Amount settled so far in NGN."
+          "description": "Amount settled so far."
+        },
+        "customerId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128,
+          "description": "Optional linked Customer ID."
         },
         "customer": {
           "type": "string",
@@ -194,6 +314,10 @@
           "maxLength": 300,
           "description": "Optional delivery or order notes."
         },
+        "stockDeductedQty": {
+          "type": "number",
+          "description": "Exact units already deducted from linked product stock to prevent duplicate deductions."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -209,18 +333,21 @@
         "saleId",
         "orderNumber",
         "userId",
+        "businessId",
         "productId",
         "product",
         "quantity",
         "unitPrice",
         "totalAmount",
         "amountPaid",
+        "customerId",
         "customer",
         "customerPhone",
         "paymentStatus",
         "paymentMethod",
         "date",
         "notes",
+        "stockDeductedQty",
         "createdAt",
         "updatedAt"
       ]
@@ -243,6 +370,13 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$",
           "description": "Owner Firebase Auth UID."
+        },
+        "businessId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Associated business document ID."
         },
         "category": {
           "type": "string",
@@ -271,7 +405,7 @@
         },
         "amount": {
           "type": "number",
-          "description": "Expense amount in NGN (must be > 0)."
+          "description": "Expense amount (must be > 0)."
         },
         "paymentMethod": {
           "type": "string",
@@ -299,6 +433,7 @@
       "required": [
         "expenseId",
         "userId",
+        "businessId",
         "category",
         "description",
         "vendor",
@@ -309,8 +444,8 @@
         "updatedAt"
       ]
     },
-    "InventoryItem": {
-      "title": "InventoryItem",
+    "ProductItem": {
+      "title": "ProductItem",
       "description": "Product inventory item owned by an authenticated user.",
       "type": "object",
       "properties": {
@@ -327,6 +462,13 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$",
           "description": "Owner Firebase Auth UID."
+        },
+        "businessId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Associated business document ID."
         },
         "sku": {
           "type": "string",
@@ -359,11 +501,11 @@
         },
         "costPrice": {
           "type": "number",
-          "description": "Unit purchase cost in NGN (>= 0)."
+          "description": "Unit purchase cost (>= 0)."
         },
         "sellingPrice": {
           "type": "number",
-          "description": "Unit selling price in NGN (> 0)."
+          "description": "Unit selling price (> 0)."
         },
         "quantity": {
           "type": "number",
@@ -387,6 +529,7 @@
       "required": [
         "productId",
         "userId",
+        "businessId",
         "sku",
         "productName",
         "category",
@@ -398,24 +541,116 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "CustomerRecord": {
+      "title": "CustomerRecord",
+      "description": "Customer profile associated with an authenticated user's business.",
+      "type": "object",
+      "properties": {
+        "customerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique Customer ID matching the document ID."
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owner Firebase Auth UID."
+        },
+        "businessId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Associated business document ID."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140,
+          "description": "Customer full name or store name."
+        },
+        "phone": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 40,
+          "description": "Customer contact phone number."
+        },
+        "email": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 160,
+          "description": "Optional customer email address."
+        },
+        "totalOrders": {
+          "type": "number",
+          "description": "Count of orders recorded for this customer (>= 0)."
+        },
+        "totalSpent": {
+          "type": "number",
+          "description": "Cumulative order spend for this customer (>= 0)."
+        },
+        "lastOrderDate": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Date of most recent order (YYYY-MM-DD)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when last updated."
+        }
+      },
+      "required": [
+        "customerId",
+        "userId",
+        "businessId",
+        "name",
+        "phone",
+        "email",
+        "totalOrders",
+        "totalSpent",
+        "lastOrderDate",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
-      "description": "Private SME owner profile and business settings; strictly restricted to the owning UID."
+      "description": "Private SME owner account profile; strictly restricted to the owning UID."
+    },
+    "/businesses/{businessId}": {
+      "schema": { "$ref": "#/entities/BusinessProfile" },
+      "description": "Business profile document (name, category, location, phone, currency) restricted to the owning UID."
     },
     "/sales/{saleId}": {
       "schema": { "$ref": "#/entities/SaleRecord" },
-      "description": "Customer sales orders scoped by userId."
+      "description": "Customer sales orders scoped by userId with atomic stock-deduction tracking."
     },
     "/expenses/{expenseId}": {
       "schema": { "$ref": "#/entities/ExpenseRecord" },
       "description": "Operational business expenses scoped by userId."
     },
-    "/inventory/{productId}": {
-      "schema": { "$ref": "#/entities/InventoryItem" },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/ProductItem" },
       "description": "Product catalogue and stock quantities scoped by userId."
+    },
+    "/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/CustomerRecord" },
+      "description": "Business customer directory records scoped by userId."
     }
   }
 }
