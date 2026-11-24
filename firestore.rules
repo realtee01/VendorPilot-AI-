@@ -1,0 +1,307 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Reusable Hardened Global Primitives
+    // -------------------------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isIsoDate(val) {
+      return val is string && val.size() == 10 && val.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function hasUserProfile() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isValidPaymentMethod(val) {
+      return val is string && val in ['Bank Transfer', 'POS Terminal', 'Cash', 'Mobile Money'];
+    }
+
+    function isValidPaymentStatus(val) {
+      return val is string && val in ['Paid', 'Pending', 'Partial'];
+    }
+
+    function isValidExpenseCategory(val) {
+      return val is string && val in [
+        'Inventory Restock',
+        'Logistics & Delivery',
+        'Power & Generator Fuel',
+        'Rent & Utilities',
+        'Staff Salaries',
+        'Marketing & Ads',
+        'Packaging & Supplies'
+      ];
+    }
+
+    function isValidProductCategory(val) {
+      return val is string && val in [
+        'Grains & Staples',
+        'Cooking Oils',
+        'Beverages & Dairy',
+        'Packaged Foods',
+        'Household Essentials'
+      ];
+    }
+
+    // -------------------------------------------------------------------------
+    // Entity Validation Blueprints (Anti-Update-Gap)
+    // -------------------------------------------------------------------------
+    function isValidUserProfile(data) {
+      return data.keys().hasAll([
+        'userId', 'name', 'email', 'businessName', 'businessType',
+        'rcNumber', 'address', 'phone', 'currencyCode', 'currencySymbol',
+        'defaultReorderLevel', 'vatEnabled', 'vatRate', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'userId', 'name', 'email', 'businessName', 'businessType',
+        'rcNumber', 'address', 'phone', 'currencyCode', 'currencySymbol',
+        'defaultReorderLevel', 'vatEnabled', 'vatRate', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.userId) &&
+      data.userId == request.auth.uid &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+      data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+      data.businessName is string && data.businessName.size() >= 1 && data.businessName.size() <= 140 &&
+      data.businessType is string && data.businessType.size() >= 1 && data.businessType.size() <= 120 &&
+      data.rcNumber is string && data.rcNumber.size() <= 40 &&
+      data.address is string && data.address.size() <= 240 &&
+      data.phone is string && data.phone.size() <= 40 &&
+      data.currencyCode is string && data.currencyCode == 'NGN' &&
+      data.currencySymbol is string && data.currencySymbol == '₦' &&
+      data.defaultReorderLevel is number && data.defaultReorderLevel >= 0 && data.defaultReorderLevel <= 100000 &&
+      data.vatEnabled is bool &&
+      data.vatRate is number && data.vatRate >= 0 && data.vatRate <= 100 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidSale(data) {
+      return data.keys().hasAll([
+        'saleId', 'orderNumber', 'userId', 'productId', 'product',
+        'quantity', 'unitPrice', 'totalAmount', 'amountPaid',
+        'customer', 'customerPhone', 'paymentStatus', 'paymentMethod',
+        'date', 'notes', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'saleId', 'orderNumber', 'userId', 'productId', 'product',
+        'quantity', 'unitPrice', 'totalAmount', 'amountPaid',
+        'customer', 'customerPhone', 'paymentStatus', 'paymentMethod',
+        'date', 'notes', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.saleId) &&
+      data.orderNumber is string && data.orderNumber.size() >= 1 && data.orderNumber.size() <= 32 &&
+      isValidId(data.userId) &&
+      data.userId == request.auth.uid &&
+      data.productId is string && (data.productId.size() == 0 || isValidId(data.productId)) &&
+      data.product is string && data.product.size() >= 1 && data.product.size() <= 160 &&
+      data.quantity is number && data.quantity > 0 && data.quantity <= 1000000 &&
+      data.unitPrice is number && data.unitPrice > 0 && data.unitPrice <= 1000000000 &&
+      data.totalAmount is number && data.totalAmount > 0 && data.totalAmount <= 100000000000 &&
+      data.amountPaid is number && data.amountPaid >= 0 && data.amountPaid <= data.totalAmount &&
+      (
+        (data.paymentStatus == 'Paid' && data.amountPaid == data.totalAmount) ||
+        (data.paymentStatus == 'Pending' && data.amountPaid == 0) ||
+        (data.paymentStatus == 'Partial' && data.amountPaid > 0 && data.amountPaid < data.totalAmount)
+      ) &&
+      data.customer is string && data.customer.size() >= 1 && data.customer.size() <= 140 &&
+      data.customerPhone is string && data.customerPhone.size() <= 40 &&
+      isValidPaymentStatus(data.paymentStatus) &&
+      isValidPaymentMethod(data.paymentMethod) &&
+      isIsoDate(data.date) &&
+      data.notes is string && data.notes.size() <= 300 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidExpense(data) {
+      return data.keys().hasAll([
+        'expenseId', 'userId', 'category', 'description', 'vendor',
+        'amount', 'paymentMethod', 'date', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'expenseId', 'userId', 'category', 'description', 'vendor',
+        'amount', 'paymentMethod', 'date', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.expenseId) &&
+      isValidId(data.userId) &&
+      data.userId == request.auth.uid &&
+      isValidExpenseCategory(data.category) &&
+      data.description is string && data.description.size() >= 1 && data.description.size() <= 240 &&
+      data.vendor is string && data.vendor.size() >= 1 && data.vendor.size() <= 140 &&
+      data.amount is number && data.amount > 0 && data.amount <= 100000000000 &&
+      isValidPaymentMethod(data.paymentMethod) &&
+      isIsoDate(data.date) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidInventory(data) {
+      return data.keys().hasAll([
+        'productId', 'userId', 'sku', 'productName', 'category', 'unit',
+        'costPrice', 'sellingPrice', 'quantity', 'lowStockThreshold',
+        'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'productId', 'userId', 'sku', 'productName', 'category', 'unit',
+        'costPrice', 'sellingPrice', 'quantity', 'lowStockThreshold',
+        'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.productId) &&
+      isValidId(data.userId) &&
+      data.userId == request.auth.uid &&
+      data.sku is string && data.sku.size() >= 1 && data.sku.size() <= 40 &&
+      data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 160 &&
+      isValidProductCategory(data.category) &&
+      data.unit is string && data.unit.size() >= 1 && data.unit.size() <= 30 &&
+      data.costPrice is number && data.costPrice >= 0 && data.costPrice <= 1000000000 &&
+      data.sellingPrice is number && data.sellingPrice > 0 && data.sellingPrice <= 1000000000 &&
+      data.quantity is number && data.quantity >= 0 && data.quantity <= 10000000 &&
+      data.lowStockThreshold is number && data.lowStockThreshold >= 0 && data.lowStockThreshold <= 1000000 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // -------------------------------------------------------------------------
+    // Collection Rules (Exhaustive Coverage of All 4 Blueprint Collections)
+    // -------------------------------------------------------------------------
+
+    // 1. Users (PII-isolated: owner-only get/create/update; no list)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+
+      allow create: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isOwner(userId) &&
+        isValidUserProfile(incoming()) &&
+        incoming().userId == userId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isOwner(userId) &&
+        isValidUserProfile(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'email', 'businessName', 'businessType',
+          'rcNumber', 'address', 'phone',
+          'defaultReorderLevel', 'vatEnabled', 'vatRate', 'updatedAt'
+        ]);
+
+      allow delete: if false;
+    }
+
+    // 2. Sales & Orders (Tenant-scoped, terminal-state locked once Paid)
+    match /sales/{saleId} {
+      allow get: if isSignedIn() && isValidId(saleId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      allow create: if isVerifiedUser() &&
+        isValidId(saleId) &&
+        isValidSale(incoming()) &&
+        incoming().saleId == saleId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        hasUserProfile();
+
+      allow update: if isVerifiedUser() &&
+        isValidId(saleId) &&
+        isValidSale(incoming()) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().saleId == existing().saleId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        // Terminal State Lock: settled orders cannot be modified
+        existing().paymentStatus != 'Paid' &&
+        // Action: Mark Pending/Partial order as Paid
+        (
+          incoming().paymentStatus == 'Paid' &&
+          incoming().amountPaid == existing().totalAmount &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['paymentStatus', 'amountPaid', 'updatedAt'])
+        );
+
+      allow delete: if isVerifiedUser() && isValidId(saleId) && existing().userId == request.auth.uid;
+    }
+
+    // 3. Expenses (Tenant-scoped, immutable after creation)
+    match /expenses/{expenseId} {
+      allow get: if isSignedIn() && isValidId(expenseId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      allow create: if isVerifiedUser() &&
+        isValidId(expenseId) &&
+        isValidExpense(incoming()) &&
+        incoming().expenseId == expenseId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        hasUserProfile();
+
+      allow update: if false;
+
+      allow delete: if isVerifiedUser() && isValidId(expenseId) && existing().userId == request.auth.uid;
+    }
+
+    // 4. Inventory (Tenant-scoped, action-based updates)
+    match /inventory/{productId} {
+      allow get: if isSignedIn() && isValidId(productId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      allow create: if isVerifiedUser() &&
+        isValidId(productId) &&
+        isValidInventory(incoming()) &&
+        incoming().productId == productId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        hasUserProfile();
+
+      allow update: if isVerifiedUser() &&
+        isValidId(productId) &&
+        isValidInventory(incoming()) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().productId == existing().productId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          // Action 1: Stock quantity adjustment (Restock or Sale deduction)
+          incoming().diff(existing()).affectedKeys().hasOnly(['quantity', 'updatedAt']) ||
+          // Action 2: Edit product details
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'sku', 'productName', 'category', 'unit',
+            'costPrice', 'sellingPrice', 'quantity', 'lowStockThreshold', 'updatedAt'
+          ])
+        );
+
+      allow delete: if isVerifiedUser() && isValidId(productId) && existing().userId == request.auth.uid;
+    }
+  }
+}

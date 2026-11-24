@@ -1,0 +1,8 @@
+{
+  "name": "VendorPilot AI",
+  "description": "AI-powered business management platform for Nigerian SMEs to track sales, expenses, inventory, and business performance from one dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
