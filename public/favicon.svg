@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none">
+  <defs>
+    <linearGradient id="vp-bg" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="55%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#090e17" />
+    </linearGradient>
+    <radialGradient id="vp-glow" cx="76%" cy="24%" r="65%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.34" />
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="vp-stroke" x1="14" y1="44" x2="50" y2="16" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="55%" stop-color="#34d399" />
+      <stop offset="100%" stop-color="#6ee7b7" />
+    </linearGradient>
+  </defs>
+
+  <!-- Crisp dark slate rounded tile with subtle emerald edge for light & dark browser tabs -->
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#vp-bg)" />
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#vp-glow)" />
+  <rect
+    x="2.75"
+    y="2.75"
+    width="58.5"
+    height="58.5"
+    rx="15.25"
+    stroke="#34d399"
+    stroke-opacity="0.32"
+    stroke-width="1.5"
+  />
+
+  <!-- Soft underglow on the exact VendorPilot AI upward trend arrow -->
+  <path
+    d="M15.5 42.5L27.8 22L36 34.3L48.5 18"
+    stroke="#10b981"
+    stroke-opacity="0.32"
+    stroke-width="9"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Exact VendorPilot AI logo mark centered and scaled for 16px-64px clarity -->
+  <path
+    d="M15.5 42.5L27.8 22L36 34.3L48.5 18"
+    stroke="url(#vp-stroke)"
+    stroke-width="5.2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M40.3 18H48.5V26.2"
+    stroke="url(#vp-stroke)"
+    stroke-width="5.2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>
