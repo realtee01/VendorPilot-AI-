@@ -43,6 +43,7 @@ import {
   calculateDashboardMetrics,
   computeSaleStockDelta,
   DashboardMetrics,
+  generateNextOrderNumber,
   ExpenseCategorySummary,
   getExpenseByCategory,
   getLowStockProducts,
@@ -174,15 +175,17 @@ function normalizeSaleAmounts(
   rawAmountPaid: number
 ): { totalAmount: number; amountPaid: number } {
   const totalAmount = Math.round(quantity * unitPrice * 100) / 100;
-  const amountPaid =
-    paymentStatus === 'Paid'
-      ? totalAmount
-      : paymentStatus === 'Pending'
-        ? 0
-        : Math.min(
-            Math.round((totalAmount - 0.01) * 100) / 100,
-            Math.max(0.01, Math.round(rawAmountPaid * 100) / 100)
-          );
+  if (paymentStatus === 'Paid') {
+    return { totalAmount, amountPaid: totalAmount };
+  }
+  if (paymentStatus === 'Pending') {
+    return { totalAmount, amountPaid: 0 };
+  }
+  const maxPartial = Math.round((totalAmount - 0.01) * 100) / 100;
+  if (maxPartial <= 0) {
+    return { totalAmount, amountPaid: 0 };
+  }
+  const amountPaid = Math.min(maxPartial, Math.max(0.01, Math.round(rawAmountPaid * 100) / 100));
   return { totalAmount, amountPaid };
 }
 
@@ -511,7 +514,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
       unsubExpenses();
       unsubCustomers();
     };
-  }, [authReady, user, profileExists]);
+  }, [authReady, user, emailVerified, profileExists]);
 
   const dataLoading =
     profileExists &&
@@ -602,7 +605,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     if (!user) throw new Error('Authentication required.');
 
     const saleId = payload.draftSaleId || generateDocumentId('sale');
-    const orderNumber = `VP-${String(1001 + sales.length).padStart(4, '0')}`;
+    const orderNumber = generateNextOrderNumber(sales);
     const { totalAmount, amountPaid } = normalizeSaleAmounts(
       payload.quantity,
       payload.unitPrice,
@@ -836,6 +839,9 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
         if (!saleSnap.exists()) return;
 
         const data = saleSnap.data();
+        if (data.userId !== user.uid) {
+          throw new Error('Unauthorized sale deletion attempt.');
+        }
         const linkedProductId = data.productId ? String(data.productId) : null;
         const deductedQty = Math.max(0, Number(data.stockDeductedQty ?? 0));
 
@@ -995,6 +1001,9 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
         const prodRef = doc(db, 'products', productId);
         const prodSnap = await tx.get(prodRef);
         if (!prodSnap.exists()) return;
+        if (prodSnap.data().userId !== user.uid) {
+          throw new Error('Unauthorized product restock attempt.');
+        }
         const currentStock = Math.max(0, Number(prodSnap.data().quantity ?? 0));
         tx.update(prodRef, {
           quantity: currentStock + Math.round(addedQuantity),
@@ -1020,7 +1029,11 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     if (!user) throw new Error('Authentication required.');
     const curr = normalizeCurrency(next.currencyCode);
     const safeName = sanitizeText(next.ownerName, BLUEPRINT_LIMITS.nameMax);
-    const safeEmail = sanitizeText(next.email, BLUEPRINT_LIMITS.emailMax);
+    const rawEmail = sanitizeText(next.email, BLUEPRINT_LIMITS.emailMax);
+    const safeEmail =
+      rawEmail.length >= 3
+        ? rawEmail
+        : sanitizeText(user.email || 'owner@business.ng', BLUEPRINT_LIMITS.emailMax);
     const safeBizName = sanitizeText(next.businessName, BLUEPRINT_LIMITS.businessNameMax);
     const safeCategory = sanitizeText(next.businessType, BLUEPRINT_LIMITS.businessTypeMax);
     const safeRc = sanitizeText(next.rcNumber, BLUEPRINT_LIMITS.rcNumberMax);
@@ -1034,10 +1047,10 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     const bizRef = doc(db, 'businesses', user.uid);
 
     try {
-      const bizSnap = await getDoc(bizRef);
+      const [userSnap, bizSnap] = await Promise.all([getDoc(userRef), getDoc(bizRef)]);
       const batch = writeBatch(db);
 
-      batch.update(userRef, {
+      const userPayload = {
         businessId: user.uid,
         name: safeName,
         email: safeEmail,
@@ -1052,7 +1065,17 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
         vatEnabled: safeVatEnabled,
         vatRate: safeVatRate,
         updatedAt: serverTimestamp(),
-      });
+      };
+
+      if (userSnap.exists()) {
+        batch.update(userRef, userPayload);
+      } else {
+        batch.set(userRef, {
+          userId: user.uid,
+          ...userPayload,
+          createdAt: serverTimestamp(),
+        });
+      }
 
       if (bizSnap.exists()) {
         batch.update(bizRef, {

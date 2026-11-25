@@ -25,7 +25,7 @@ export class ErrorBoundary extends React.Component<
             'Your Firestore daily free-tier quota has been reached. Quotas reset the next day.';
         } else if (parsed.error?.includes('Missing or insufficient permissions')) {
           readable =
-            'Permission denied while syncing your business records. Please verify your account is signed in with a verified Google email.';
+            'Permission denied while syncing your business records. Please verify your account is signed in with a verified email address.';
         } else if (parsed.error) {
           readable = parsed.error;
         }

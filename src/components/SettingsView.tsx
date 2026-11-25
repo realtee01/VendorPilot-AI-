@@ -4,6 +4,7 @@ import { BusinessSettings } from '../types/business';
 import { CURRENCY_OPTIONS, getCurrencySymbol } from '../data/constants';
 import { useBusiness } from '../context/BusinessContext';
 import { formatShortDate } from '../utils/analytics';
+import { isValidEmailFormat } from '../utils/authValidation';
 
 export function SettingsView() {
   const { state, user, updateSettings, signOutUser } = useBusiness();
@@ -20,6 +21,10 @@ export function SettingsView() {
     e.preventDefault();
     if (!form.businessName.trim() || !form.ownerName.trim() || !form.businessType.trim()) {
       setErrorNotice('Business Name, Owner Name, and Business Type are required.');
+      return;
+    }
+    if (!isValidEmailFormat(form.email)) {
+      setErrorNotice('Please enter a valid business email address (for example, owner@business.ng).');
       return;
     }
 
@@ -299,7 +304,7 @@ export function SettingsView() {
         <div className="border-b border-slate-100 pb-4">
           <h2 className="text-base font-semibold text-slate-900">Account & Data Export</h2>
           <p className="mt-0.5 text-sm text-slate-500">
-            Signed in with Google as <span className="font-medium text-slate-700">{user?.email}</span>
+            Signed in as <span className="font-medium text-slate-700">{user?.email}</span>
             {state.settings.createdAt && (
               <>
                 <span className="mx-2 text-slate-300" aria-hidden="true">·</span>

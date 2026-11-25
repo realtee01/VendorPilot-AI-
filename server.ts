@@ -11,21 +11,35 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
+app.disable('x-powered-by');
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
 app.use(express.json({ limit: '256kb' }));
 
 app.post('/api/ai-assistant', async (req, res) => {
-  const result = await handleAiAssistantRequest({
-    authorizationHeader: req.headers.authorization,
-    body: req.body,
-  });
+  try {
+    const result = await handleAiAssistantRequest({
+      authorizationHeader: req.headers.authorization,
+      body: req.body,
+    });
 
-  if (result.headers) {
-    for (const [key, value] of Object.entries(result.headers)) {
-      res.setHeader(key, value);
+    if (result.headers) {
+      for (const [key, value] of Object.entries(result.headers)) {
+        res.setHeader(key, value);
+      }
     }
-  }
 
-  return res.status(result.status).json(result.body);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('Unexpected error in /api/ai-assistant:', err);
+    return res.status(500).json({
+      error: 'An unexpected server error occurred. Please try again shortly.',
+    });
+  }
 });
 
 app.get('/api/health', (_req, res) => {
@@ -38,7 +52,10 @@ async function startServer() {
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        allowedHosts: true,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

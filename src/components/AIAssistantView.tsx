@@ -1,25 +1,39 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Send, RotateCcw, AlertCircle, CalendarDays, FileBarChart2 } from 'lucide-react';
+import {
+  Send,
+  RotateCcw,
+  CalendarDays,
+  FileBarChart2,
+  Sparkles,
+  MessageSquareText,
+  Lightbulb,
+} from 'lucide-react';
 import { ChatMessage } from '../types/business';
 import { useBusiness } from '../context/BusinessContext';
 import { formatNaira } from '../utils/analytics';
 import { buildBusinessAnalyticsReport } from '../utils/assistantAnalytics';
+import {
+  answerBusinessQuestion,
+  AssistantReportType,
+  CURATED_TOPIC_PROMPTS,
+  FallbackGuide,
+  QuestionTopic,
+} from '../utils/localAssistantEngine';
 
-type AssistantReportType = 'chat' | 'weekly_summary' | 'monthly_summary';
-
-interface AssistantUsageInfo {
-  remainingMinute: number;
-  remainingDaily: number;
-  minuteLimit: number;
-  dailyLimit: number;
+interface AssistantThreadMessage extends ChatMessage {
+  followUps?: string[];
+  isFallback?: boolean;
+  fallbackGuide?: FallbackGuide;
 }
 
-const STARTER_PROMPTS = [
-  'How much revenue did I generate this month?',
-  'Which product sold the most?',
-  'What were my biggest expenses?',
-  'Which products need restocking?',
-  'What is my estimated net profit?',
+const TOPIC_TABS: QuestionTopic[] = [
+  'Sales & Revenue',
+  'Profit & Cashflow',
+  'Expenses & Costs',
+  'Inventory & Stock',
+  'Customers & Payments',
+  'Summaries & Advice',
+  'Website & Account Guide',
 ];
 
 function renderFormattedText(content: string): React.ReactNode {
@@ -28,13 +42,30 @@ function renderFormattedText(content: string): React.ReactNode {
   let bulletBuffer: string[] = [];
 
   const formatInline = (text: string) => {
-    const parts = text.split(/(\*\*[^*]+\*\*)/g);
+    const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g);
     return parts.map((part, idx) => {
       if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
         return (
           <strong key={idx} className="font-semibold text-slate-900">
             {part.slice(2, -2)}
           </strong>
+        );
+      }
+      if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
+        return (
+          <code
+            key={idx}
+            className="rounded bg-slate-200/70 px-1.5 py-0.5 font-mono text-xs text-slate-800"
+          >
+            {part.slice(1, -1)}
+          </code>
+        );
+      }
+      if (part.startsWith('*') && part.endsWith('*') && part.length > 2) {
+        return (
+          <em key={idx} className="italic text-slate-700">
+            {part.slice(1, -1)}
+          </em>
         );
       }
       return <React.Fragment key={idx}>{part}</React.Fragment>;
@@ -92,16 +123,15 @@ function renderFormattedText(content: string): React.ReactNode {
 }
 
 export function AIAssistantView() {
-  const { user, state, metrics, topSellingProducts } = useBusiness();
+  const { state, metrics, topSellingProducts } = useBusiness();
   const currencySymbol = state.settings.currencySymbol || '₦';
   const [input, setInput] = useState('');
-  const [lastRequest, setLastRequest] = useState<{
-    question: string;
-    reportType: AssistantReportType;
-  } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [contextPeriod, setContextPeriod] = useState<'month' | 'all'>('month');
-  const [usageNotice, setUsageNotice] = useState<string | null>(null);
+  const [activeTopic, setActiveTopic] = useState<QuestionTopic>('Sales & Revenue');
+
+  const replyTimerRef = useRef<number | null>(null);
+  const scrollEndRef = useRef<HTMLDivElement | null>(null);
 
   const report = useMemo(
     () =>
@@ -115,15 +145,16 @@ export function AIAssistantView() {
   );
 
   const firstName = state.settings.ownerName.trim().split(' ')[0] || 'there';
+  const businessName = state.settings.businessName.trim() || 'your business';
   const hasRecords =
     state.sales.length > 0 || state.expenses.length > 0 || state.products.length > 0;
 
   const buildWelcomeContent = () =>
     hasRecords
-      ? `Hello ${firstName}. I am connected to **${state.settings.businessName}**'s verified Firestore records: all-time revenue is **${formatNaira(report.allTime.totalRevenue, false, currencySymbol)}**, expenses are **${formatNaira(report.allTime.totalExpenses, false, currencySymbol)}**, and estimated net profit is **${formatNaira(report.allTime.netProfit, false, currencySymbol)}** (${report.allTime.profitMarginPct}% margin).\n\nThis month (${report.monthlySummary.label}), you have recorded **${formatNaira(report.monthlySummary.revenue, false, currencySymbol)}** in revenue across **${report.monthlySummary.orderCount}** order${report.monthlySummary.orderCount === 1 ? '' : 's'}, with **${report.allTime.lowStockCount}** SKU${report.allTime.lowStockCount === 1 ? '' : 's'} needing restock attention. Ask a question below or generate a Weekly or Monthly Summary.`
-      : `Hello ${firstName}. Welcome to **${state.settings.businessName}**'s AI Business Assistant. I analyse your actual Cloud Firestore sales, expenses, and inventory records and will never invent figures.\n\nYou have not recorded any sales, expenses, or products yet. Once you add your first records, ask me about revenue, expenses, profit, top-selling products, low-stock alerts, or weekly and monthly summaries.`;
+      ? `Hello ${firstName}. Welcome to **${businessName}**'s AI Business Assistant. I analyse your actual Cloud Firestore sales, expenses, and inventory records and will never invent figures.\n\nRight now, all-time revenue is **${formatNaira(report.allTime.totalRevenue, false, currencySymbol)}**, expenses are **${formatNaira(report.allTime.totalExpenses, false, currencySymbol)}**, and estimated net profit is **${formatNaira(report.allTime.netProfit, false, currencySymbol)}** (${report.allTime.profitMarginPct}% margin). This month (${report.monthlySummary.label}), you have **${formatNaira(report.monthlySummary.revenue, false, currencySymbol)}** across **${report.monthlySummary.orderCount}** order${report.monthlySummary.orderCount === 1 ? '' : 's'} and **${report.allTime.lowStockCount}** SKU${report.allTime.lowStockCount === 1 ? '' : 's'} needing restock attention. Ask a question below or generate a Weekly or Monthly Summary.`
+      : `Hello ${firstName}. Welcome to **${businessName}**'s AI Business Assistant. I analyse your actual Cloud Firestore sales, expenses, and inventory records and will never invent figures.\n\nYou have not recorded any sales, expenses, or products yet. Ask me how to use any feature on the website right now, or once you add your first records, ask about revenue, expenses, profit, top-selling products, customers, low-stock alerts, or weekly and monthly summaries.`;
 
-  const [messages, setMessages] = useState<ChatMessage[]>(() => [
+  const [messages, setMessages] = useState<AssistantThreadMessage[]>(() => [
     {
       id: 'welcome-1',
       role: 'assistant',
@@ -132,130 +163,85 @@ export function AIAssistantView() {
     },
   ]);
 
-  const scrollEndRef = useRef<HTMLDivElement | null>(null);
-
   useEffect(() => {
     scrollEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  const sendRequest = async (
+  useEffect(() => {
+    return () => {
+      if (replyTimerRef.current !== null) {
+        window.clearTimeout(replyTimerRef.current);
+      }
+    };
+  }, []);
+
+  const sendRequest = (
     questionText: string,
     reportType: AssistantReportType = 'chat'
   ) => {
     const trimmed = questionText.trim();
     if (!trimmed || isLoading) return;
 
-    if (!user) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `err-${Date.now()}`,
-          role: 'assistant',
-          content: 'Please sign in with your Google account to query your business records.',
-          timestamp: new Date().toLocaleTimeString('en-NG', {
-            hour: '2-digit',
-            minute: '2-digit',
-          }),
-          isError: true,
-        },
-      ]);
-      return;
-    }
-
     const timeLabel = new Date().toLocaleTimeString('en-NG', {
       hour: '2-digit',
       minute: '2-digit',
     });
 
-    const userMsg: ChatMessage = {
+    const userMsg: AssistantThreadMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
       content: trimmed,
       timestamp: timeLabel,
     };
 
-    const historyForApi = messages
-      .filter((m) => !m.isError)
-      .slice(-6)
-      .map((m) => ({ role: m.role, content: m.content }));
-
-    setLastRequest({ question: trimmed, reportType });
     setMessages((prev) => [...prev, userMsg]);
     if (reportType === 'chat') {
       setInput('');
     }
     setIsLoading(true);
-    setUsageNotice(null);
 
-    try {
-      const idToken = await user.getIdToken();
-      const res = await fetch('/api/ai-assistant', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          question: trimmed,
-          reportType,
-          history: reportType === 'chat' ? historyForApi : [],
-        }),
-      });
+    // Compute grounded response purely from live Firestore state + pre-built knowledge engine
+    const result = answerBusinessQuestion({
+      question: trimmed,
+      reportType,
+      settings: state.settings,
+      sales: state.sales,
+      expenses: state.expenses,
+      products: state.products,
+      customers: state.customers,
+    });
 
-      const data = (await res.json()) as {
-        answer?: string;
-        error?: string;
-        usage?: AssistantUsageInfo;
-      };
-
-      if (data.usage && data.usage.remainingDaily <= 5) {
-        setUsageNotice(
-          `${data.usage.remainingDaily} of ${data.usage.dailyLimit} daily AI queries remaining today.`
-        );
-      }
-
-      if (!res.ok || !data.answer) {
-        throw new Error(data.error || 'Unable to retrieve AI response.');
-      }
-
+    // Brief natural analysis pause so transitions feel responsive and conversational
+    if (replyTimerRef.current !== null) {
+      window.clearTimeout(replyTimerRef.current);
+    }
+    replyTimerRef.current = window.setTimeout(() => {
       setMessages((prev) => [
         ...prev,
         {
           id: `ai-${Date.now()}`,
           role: 'assistant',
-          content: data.answer as string,
+          content: result.answer,
           timestamp: new Date().toLocaleTimeString('en-NG', {
             hour: '2-digit',
             minute: '2-digit',
           }),
+          followUps: result.suggestedFollowUps,
+          isFallback: result.isFallback,
+          fallbackGuide: result.fallbackGuide,
         },
       ]);
-    } catch (err: unknown) {
-      const errorMessage =
-        err instanceof Error
-          ? err.message
-          : 'Could not reach the AI Business Assistant service. Please try again.';
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `err-${Date.now()}`,
-          role: 'assistant',
-          content: errorMessage,
-          timestamp: new Date().toLocaleTimeString('en-NG', {
-            hour: '2-digit',
-            minute: '2-digit',
-          }),
-          isError: true,
-        },
-      ]);
-    } finally {
       setIsLoading(false);
-    }
+      replyTimerRef.current = null;
+    }, 380);
   };
 
   const handleResetChat = () => {
-    setUsageNotice(null);
-    setLastRequest(null);
+    if (replyTimerRef.current !== null) {
+      window.clearTimeout(replyTimerRef.current);
+      replyTimerRef.current = null;
+    }
+    setIsLoading(false);
     setMessages([
       {
         id: `welcome-${Date.now()}`,
@@ -279,18 +265,23 @@ export function AIAssistantView() {
       ? report.monthlySummary.topProducts[0]?.productName ?? 'None yet'
       : topSellingProducts[0]?.productName ?? 'None yet';
 
+  const topicPrompts = CURATED_TOPIC_PROMPTS[activeTopic];
+
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
       {/* Main Conversational Column */}
       <section
         aria-label="AI Business Assistant chat"
-        className="flex min-h-[620px] flex-col rounded-xl border border-slate-200 bg-white lg:col-span-8"
+        className="flex min-h-[640px] flex-col rounded-xl border border-slate-200 bg-white lg:col-span-8"
       >
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-4">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">Business Performance Advisor</h2>
+            <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
+              <Sparkles className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+              <span>Business Performance Advisor</span>
+            </h2>
             <p className="text-xs text-slate-500">
-              Analyses {state.settings.businessName}&apos;s actual Cloud Firestore sales, expenses, and stock records
+              Analyses {businessName}&apos;s actual Cloud Firestore sales, expenses, and inventory records
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -335,66 +326,155 @@ export function AIAssistantView() {
 
         {/* Message Stream */}
         <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5" data-testid="assistant-messages">
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
-            >
-              <div className="mb-1 flex items-center gap-2 text-xs text-slate-400">
-                <span className="font-medium text-slate-600">
-                  {msg.role === 'user' ? state.settings.ownerName : 'VendorPilot AI'}
-                </span>
-                <span aria-hidden="true">·</span>
-                <span className="font-mono text-[11px]">{msg.timestamp}</span>
-              </div>
+          {messages.map((msg, idx) => {
+            const isLatestAssistant =
+              msg.role === 'assistant' && idx === messages.length - 1 && !isLoading;
 
-              {msg.role === 'user' ? (
-                <div className="max-w-[85%] rounded-xl bg-slate-900 px-4 py-3 text-sm leading-relaxed text-white">
-                  {msg.content}
+            return (
+              <div
+                key={msg.id}
+                className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+              >
+                <div className="mb-1 flex items-center gap-2 text-xs text-slate-400">
+                  <span className="font-medium text-slate-600">
+                    {msg.role === 'user' ? state.settings.ownerName : 'VendorPilot AI'}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span className="font-mono text-[11px]">{msg.timestamp}</span>
                 </div>
-              ) : msg.isError ? (
-                <div
-                  role="alert"
-                  className="flex max-w-[90%] flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"
-                >
-                  <div className="flex items-start gap-2.5">
-                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
-                    <span>{msg.content}</span>
+
+                {msg.role === 'user' ? (
+                  <div className="max-w-[85%] rounded-xl bg-slate-900 px-4 py-3 text-sm leading-relaxed text-white">
+                    {msg.content}
                   </div>
-                  {lastRequest && !isLoading && (
-                    <button
-                      type="button"
-                      onClick={() => sendRequest(lastRequest.question, lastRequest.reportType)}
-                      className="shrink-0 rounded-md border border-rose-200 bg-white px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100"
-                    >
-                      Retry
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <div className="max-w-[92%] rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3.5 text-sm">
-                  {renderFormattedText(msg.content)}
-                </div>
-              )}
-            </div>
-          ))}
+                ) : msg.isFallback && msg.fallbackGuide ? (
+                  <div
+                    role="status"
+                    aria-label="Ask Me Anything guide"
+                    className="max-w-[92%] rounded-xl border border-emerald-200/80 bg-white p-4 text-sm shadow-xs"
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <span
+                        aria-hidden="true"
+                        className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700"
+                      >
+                        <MessageSquareText className="h-4 w-4" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-semibold tracking-wide text-emerald-700 uppercase">
+                          Ask Me Anything
+                        </p>
+                        <h3 className="mt-0.5 text-sm font-semibold text-slate-900">
+                          {msg.fallbackGuide.heading}
+                        </h3>
+                        {msg.fallbackGuide.unmatchedQuery && (
+                          <p className="mt-1.5 text-xs text-slate-500">
+                            I couldn&apos;t directly match{' '}
+                            <span className="font-medium text-slate-700">
+                              &ldquo;{msg.fallbackGuide.unmatchedQuery}&rdquo;
+                            </span>{' '}
+                            to a predefined business report.
+                          </p>
+                        )}
+                        <p className="mt-2 leading-relaxed text-slate-700">
+                          {msg.fallbackGuide.scopeNote}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-3.5 flex items-start gap-2.5 rounded-lg border border-slate-200/80 bg-slate-50 px-3.5 py-2.5 text-xs leading-relaxed text-slate-700">
+                      <Lightbulb
+                        className="mt-0.5 h-4 w-4 shrink-0 text-amber-600"
+                        aria-hidden="true"
+                      />
+                      <p>
+                        <strong className="font-semibold text-slate-900">
+                          Tip for better results:{' '}
+                        </strong>
+                        {msg.fallbackGuide.phrasingTip}
+                      </p>
+                    </div>
+
+                    {msg.fallbackGuide.quickExamples.length > 0 && (
+                      <div className="mt-3.5">
+                        <p className="mb-2 text-xs font-medium text-slate-500">
+                          Try one of these queries:
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {msg.fallbackGuide.quickExamples.map((example) => (
+                            <button
+                              key={example}
+                              type="button"
+                              disabled={isLoading}
+                              onClick={() => sendRequest(example, 'chat')}
+                              className="rounded-lg border border-emerald-200/80 bg-emerald-50/50 px-2.5 py-1.5 text-left text-xs font-medium text-emerald-800 transition-colors hover:border-emerald-300 hover:bg-emerald-50 disabled:opacity-50"
+                            >
+                              {example}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="max-w-[92%] space-y-2.5">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3.5 text-sm">
+                      {renderFormattedText(msg.content)}
+                    </div>
+
+                    {isLatestAssistant && msg.followUps && msg.followUps.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 pt-0.5">
+                        {msg.followUps.map((followUp) => (
+                          <button
+                            key={followUp}
+                            type="button"
+                            onClick={() => sendRequest(followUp, 'chat')}
+                            className="rounded-lg border border-emerald-200/80 bg-emerald-50/50 px-2.5 py-1 text-left text-xs font-medium text-emerald-800 transition-colors hover:border-emerald-300 hover:bg-emerald-50"
+                          >
+                            {followUp}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
 
           {isLoading && (
             <div className="flex flex-col items-start">
               <span className="mb-1 text-xs font-medium text-slate-500">VendorPilot AI</span>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-                Reading your Firestore records and calculating figures...
+                Analysing {businessName}&apos;s Cloud Firestore records...
               </div>
             </div>
           )}
           <div ref={scrollEndRef} />
         </div>
 
-        {/* Starter Prompts */}
+        {/* Categorized Pre-Built Prompts */}
         <div className="border-t border-slate-100 px-6 py-3">
-          <p className="mb-2 text-xs font-medium text-slate-500">Example questions</p>
+          <div className="mb-2 flex items-center gap-1.5 overflow-x-auto pb-1" role="tablist" aria-label="Question categories">
+            {TOPIC_TABS.map((topic) => (
+              <button
+                key={topic}
+                type="button"
+                role="tab"
+                aria-selected={activeTopic === topic}
+                onClick={() => setActiveTopic(topic)}
+                className={`shrink-0 rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap ${
+                  activeTopic === topic
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70 hover:text-slate-900'
+                }`}
+              >
+                {topic}
+              </button>
+            ))}
+          </div>
           <div className="flex flex-wrap gap-2">
-            {STARTER_PROMPTS.map((prompt) => (
+            {topicPrompts.map((prompt) => (
               <button
                 key={prompt}
                 type="button"
@@ -407,12 +487,6 @@ export function AIAssistantView() {
             ))}
           </div>
         </div>
-
-        {usageNotice && (
-          <div className="border-t border-amber-100 bg-amber-50/70 px-6 py-2 text-xs text-amber-800">
-            {usageNotice}
-          </div>
-        )}
 
         {/* Prompt Composer */}
         <form
@@ -432,7 +506,7 @@ export function AIAssistantView() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             disabled={isLoading}
-            placeholder="Ask about revenue, expenses, profit, top products, or restocking..."
+            placeholder="Ask about revenue, expenses, profit, top products, customers, restocking, or website help..."
             className="h-11 flex-1 rounded-lg border border-slate-200 bg-white px-4 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none disabled:bg-slate-50"
           />
           <button
@@ -455,7 +529,7 @@ export function AIAssistantView() {
           <div>
             <h2 className="text-base font-semibold text-slate-900">Verified Ledger Context</h2>
             <p className="mt-0.5 text-xs text-slate-500">
-              Calculated directly from your Firestore records before every answer.
+              Calculated directly from your Cloud Firestore records before every answer.
             </p>
           </div>
         </div>
@@ -538,8 +612,13 @@ export function AIAssistantView() {
         </dl>
 
         <div className="border-t border-slate-100 pt-3 text-xs leading-relaxed text-slate-500">
-          Last 7 days: <strong className="font-mono text-slate-700">{formatNaira(report.weeklySummary.revenue, false, currencySymbol)}</strong> revenue across{' '}
-          <strong className="font-mono text-slate-700">{report.weeklySummary.orderCount}</strong> order{report.weeklySummary.orderCount === 1 ? '' : 's'}.
+          Last 7 days:{' '}
+          <strong className="font-mono text-slate-700">
+            {formatNaira(report.weeklySummary.revenue, false, currencySymbol)}
+          </strong>{' '}
+          revenue across{' '}
+          <strong className="font-mono text-slate-700">{report.weeklySummary.orderCount}</strong>{' '}
+          order{report.weeklySummary.orderCount === 1 ? '' : 's'}.
         </div>
       </aside>
     </div>

@@ -7,6 +7,7 @@ import {
   computeSaleStockDelta,
   filterRecordsByPeriod,
   formatNaira,
+  generateNextOrderNumber,
   getExpenseByCategory,
   getLowStockProducts,
   getOutstandingBalance,
@@ -306,3 +307,71 @@ test('computeSaleStockDelta adjusts inventory by net delta without duplicate ded
   assert.deepEqual(switched.adjustments, { 'prod-1': 22, 'prod-2': 2 });
   assert.equal(switched.nextStockDeductedQty, 4);
 });
+
+test('generateNextOrderNumber increments above highest existing VP number even after deletions', () => {
+  assert.equal(generateNextOrderNumber([]), 'VP-1001');
+  // Simulate VP-1001 deleted while VP-1002 and VP-1005 remain -> must not collide with VP-1003 or VP-1002
+  assert.equal(
+    generateNextOrderNumber([{ orderNumber: 'VP-1002' }, { orderNumber: 'VP-1005' }]),
+    'VP-1006'
+  );
+  // Ignores malformed legacy numbers safely
+  assert.equal(
+    generateNextOrderNumber([{ orderNumber: 'LEGACY-99' }, { orderNumber: 'VP-1001' }]),
+    'VP-1002'
+  );
+});
+
+test('validators enforce Firestore upper bounds and ISO dates to prevent permission errors', () => {
+  const overLimitSale = validateSaleInput({
+    productName: 'Rice',
+    quantity: 2_000_000,
+    unitPrice: 2_000_000_000,
+    customerName: 'Buyer',
+    paymentStatus: 'Paid',
+    amountPaid: 100,
+    date: '24/11/2026',
+  });
+  assert.equal(overLimitSale.valid, false);
+  assert.ok(overLimitSale.errors.quantity);
+  assert.ok(overLimitSale.errors.unitPrice);
+  assert.ok(overLimitSale.errors.date);
+
+  const badExpenseDate = validateExpenseInput({
+    description: 'Fuel',
+    vendor: 'Total',
+    amount: 5000,
+    date: 'invalid-date',
+  });
+  assert.equal(badExpenseDate.valid, false);
+  assert.ok(badExpenseDate.errors.date);
+
+  const overLimitProduct = validateProductInput({
+    name: 'Oil',
+    sku: 'OIL-1',
+    unitPrice: 2_000_000_000,
+    costPrice: 100,
+    stock: 20_000_000,
+    reorderLevel: 10,
+  });
+  assert.equal(overLimitProduct.valid, false);
+  assert.ok(overLimitProduct.errors.unitPrice);
+  assert.ok(overLimitProduct.errors.stock);
+});
+
+test('buildSalesPerformanceSeries single-pass buckets sum exact revenue and expenses', () => {
+  const series7d = buildSalesPerformanceSeries(FIXTURE_SALES, FIXTURE_EXPENSES, '7d', '2026-11-24');
+  const totalRev7d = series7d.reduce((sum, p) => sum + p.revenue, 0);
+  const totalExp7d = series7d.reduce((sum, p) => sum + p.expenses, 0);
+  assert.equal(totalRev7d, 674500);
+  assert.equal(totalExp7d, 325000);
+
+  const series30d = buildSalesPerformanceSeries(FIXTURE_SALES, FIXTURE_EXPENSES, '30d', '2026-11-24');
+  assert.equal(series30d.reduce((sum, p) => sum + p.revenue, 0), 674500);
+  assert.equal(series30d.reduce((sum, p) => sum + p.expenses, 0), 325000);
+
+  const series6m = buildSalesPerformanceSeries(FIXTURE_SALES, FIXTURE_EXPENSES, '6m', '2026-11-24');
+  assert.equal(series6m.reduce((sum, p) => sum + p.revenue, 0), 674500);
+  assert.equal(series6m.reduce((sum, p) => sum + p.expenses, 0), 325000);
+});
+

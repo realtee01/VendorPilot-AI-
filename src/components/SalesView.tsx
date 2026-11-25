@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Check, Trash2, Pencil } from 'lucide-react';
 import { PaymentMethod, PaymentStatus, SaleOrder } from '../types/business';
 import { getTodayIsoDate, PAYMENT_METHODS } from '../data/constants';
@@ -50,10 +50,13 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   const modalVisible = isModalOpen || editingSale !== null;
+  const wasNewModalOpenRef = useRef(false);
 
-  // Generate a fresh idempotency draftSaleId whenever opening a new sale modal
+  // Generate a fresh idempotency draftSaleId only when opening a new sale modal
+  // (never reset user input on background Firestore product snapshots)
   useEffect(() => {
-    if (isModalOpen && !editingSale) {
+    const isNewModalOpen = isModalOpen && !editingSale;
+    if (isNewModalOpen && !wasNewModalOpenRef.current) {
       setDraftSaleId(generateDocumentId('sale'));
       const first = state.products[0];
       setSelectedProductId(first ? first.id : 'custom');
@@ -70,6 +73,7 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
       setFormErrors({});
       setSubmitError(null);
     }
+    wasNewModalOpenRef.current = isNewModalOpen;
   }, [isModalOpen, editingSale, state.products]);
 
   const selectedProduct = useMemo(
@@ -166,6 +170,7 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
       customerName,
       paymentStatus,
       amountPaid: paidNum,
+      date,
     });
 
     if (!validation.valid) {
@@ -651,6 +656,7 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
                 onChange={(e) => setDate(e.target.value)}
                 className="mt-1 h-10 w-full rounded-lg border border-slate-200 px-3 font-mono text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
               />
+              {formErrors.date && <p className="mt-1 text-xs text-rose-600">{formErrors.date}</p>}
             </div>
 
             <div className={paymentStatus === 'Partial' ? 'sm:col-span-2' : ''}>

@@ -87,25 +87,61 @@ export function getStockStatus(product: Pick<Product, 'stock' | 'reorderLevel'>)
   return 'In Stock';
 }
 
+export function generateNextOrderNumber(
+  sales: Array<Pick<SaleOrder, 'orderNumber'>>
+): string {
+  let maxNumber = 1000;
+  for (const sale of sales) {
+    const match = /^VP-(\d+)$/i.exec(sale.orderNumber.trim());
+    if (match) {
+      const parsed = Number.parseInt(match[1], 10);
+      if (Number.isFinite(parsed) && parsed > maxNumber) {
+        maxNumber = parsed;
+      }
+    }
+  }
+  return `VP-${String(maxNumber + 1).padStart(4, '0')}`;
+}
+
 export function calculateDashboardMetrics(
   sales: SaleOrder[],
   expenses: Expense[],
   products: Product[]
 ): DashboardMetrics {
-  const totalRevenue = sales.reduce((sum, s) => sum + s.totalAmount, 0);
-  const collectedRevenue = sales.reduce(
-    (sum, s) => sum + (s.paymentStatus === 'Paid' ? s.totalAmount : Math.min(s.totalAmount, Math.max(0, s.amountPaid))),
-    0
-  );
-  const outstandingPayments = sales.reduce((sum, s) => sum + getOutstandingBalance(s), 0);
-  const unpaidOrderCount = sales.filter((s) => getOutstandingBalance(s) > 0).length;
-  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
+  let totalRevenue = 0;
+  let collectedRevenue = 0;
+  let outstandingPayments = 0;
+  let unpaidOrderCount = 0;
+
+  for (const s of sales) {
+    totalRevenue += s.totalAmount;
+    collectedRevenue +=
+      s.paymentStatus === 'Paid'
+        ? s.totalAmount
+        : Math.min(s.totalAmount, Math.max(0, s.amountPaid));
+    const balance = getOutstandingBalance(s);
+    if (balance > 0) {
+      outstandingPayments += balance;
+      unpaidOrderCount += 1;
+    }
+  }
+
+  let totalExpenses = 0;
+  for (const e of expenses) {
+    totalExpenses += e.amount;
+  }
+
   const netProfit = totalRevenue - totalExpenses;
   const profitMarginPct = totalRevenue > 0 ? Number(((netProfit / totalRevenue) * 100).toFixed(1)) : 0;
 
-  const outOfStockCount = products.filter((p) => p.stock <= 0).length;
-  const lowStockCount = products.filter((p) => p.stock <= p.reorderLevel).length;
-  const inventoryValuation = products.reduce((sum, p) => sum + p.stock * p.unitPrice, 0);
+  let outOfStockCount = 0;
+  let lowStockCount = 0;
+  let inventoryValuation = 0;
+  for (const p of products) {
+    if (p.stock <= 0) outOfStockCount += 1;
+    if (p.stock <= p.reorderLevel) lowStockCount += 1;
+    inventoryValuation += p.stock * p.unitPrice;
+  }
 
   return {
     totalRevenue,
@@ -203,47 +239,92 @@ export function buildSalesPerformanceSeries(
   const anchor = parseUtcDate(anchorIsoDate);
 
   if (range === '7d') {
+    const revByDay = new Map<string, number>();
+    const expByDay = new Map<string, number>();
+    for (const s of sales) {
+      revByDay.set(s.date, (revByDay.get(s.date) ?? 0) + s.totalAmount);
+    }
+    for (const e of expenses) {
+      expByDay.set(e.date, (expByDay.get(e.date) ?? 0) + e.amount);
+    }
+
     const points: ChartPoint[] = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date(anchor.getTime() - i * 86_400_000);
       const iso = toIsoDate(d);
       const label = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
-      const revenue = sales.filter((s) => s.date === iso).reduce((sum, s) => sum + s.totalAmount, 0);
-      const exp = expenses.filter((e) => e.date === iso).reduce((sum, e) => sum + e.amount, 0);
+      const revenue = revByDay.get(iso) ?? 0;
+      const exp = expByDay.get(iso) ?? 0;
       points.push({ label, revenue, expenses: exp, profit: revenue - exp });
     }
     return points;
   }
 
   if (range === '30d') {
-    // 5 rolling 6-day buckets over the last 30 days
-    const buckets: ChartPoint[] = [];
+    // 5 rolling 6-day buckets over the last 30 days in a single O(n) pass
+    const ranges: Array<{ startIso: string; endIso: string; label: string; revenue: number; expenses: number }> = [];
     for (let b = 4; b >= 0; b--) {
       const end = new Date(anchor.getTime() - b * 6 * 86_400_000);
       const start = new Date(end.getTime() - 5 * 86_400_000);
-      const startIso = toIsoDate(start);
-      const endIso = toIsoDate(end);
-      const label = `${start.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })} – ${end.toLocaleDateString('en-GB', { day: 'numeric', timeZone: 'UTC' })}`;
-
-      const revenue = sales
-        .filter((s) => s.date >= startIso && s.date <= endIso)
-        .reduce((sum, s) => sum + s.totalAmount, 0);
-      const exp = expenses
-        .filter((e) => e.date >= startIso && e.date <= endIso)
-        .reduce((sum, e) => sum + e.amount, 0);
-      buckets.push({ label, revenue, expenses: exp, profit: revenue - exp });
+      ranges.push({
+        startIso: toIsoDate(start),
+        endIso: toIsoDate(end),
+        label: `${start.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })} – ${end.toLocaleDateString('en-GB', { day: 'numeric', timeZone: 'UTC' })}`,
+        revenue: 0,
+        expenses: 0,
+      });
     }
-    return buckets;
+
+    const minIso = ranges[0].startIso;
+    const maxIso = ranges[ranges.length - 1].endIso;
+
+    for (const s of sales) {
+      if (s.date < minIso || s.date > maxIso) continue;
+      for (const bucket of ranges) {
+        if (s.date >= bucket.startIso && s.date <= bucket.endIso) {
+          bucket.revenue += s.totalAmount;
+          break;
+        }
+      }
+    }
+
+    for (const e of expenses) {
+      if (e.date < minIso || e.date > maxIso) continue;
+      for (const bucket of ranges) {
+        if (e.date >= bucket.startIso && e.date <= bucket.endIso) {
+          bucket.expenses += e.amount;
+          break;
+        }
+      }
+    }
+
+    return ranges.map((bucket) => ({
+      label: bucket.label,
+      revenue: bucket.revenue,
+      expenses: bucket.expenses,
+      profit: bucket.revenue - bucket.expenses,
+    }));
   }
 
-  // 6m monthly buckets
+  // 6m monthly buckets in a single O(n) pass
+  const revByMonth = new Map<string, number>();
+  const expByMonth = new Map<string, number>();
+  for (const s of sales) {
+    const ym = s.date.slice(0, 7);
+    revByMonth.set(ym, (revByMonth.get(ym) ?? 0) + s.totalAmount);
+  }
+  for (const e of expenses) {
+    const ym = e.date.slice(0, 7);
+    expByMonth.set(ym, (expByMonth.get(ym) ?? 0) + e.amount);
+  }
+
   const months: ChartPoint[] = [];
   for (let i = 5; i >= 0; i--) {
     const d = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - i, 1));
     const ym = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
     const label = d.toLocaleDateString('en-GB', { month: 'short', year: '2-digit', timeZone: 'UTC' });
-    const revenue = sales.filter((s) => s.date.startsWith(ym)).reduce((sum, s) => sum + s.totalAmount, 0);
-    const exp = expenses.filter((e) => e.date.startsWith(ym)).reduce((sum, e) => sum + e.amount, 0);
+    const revenue = revByMonth.get(ym) ?? 0;
+    const exp = expByMonth.get(ym) ?? 0;
     months.push({ label, revenue, expenses: exp, profit: revenue - exp });
   }
   return months;
@@ -272,6 +353,12 @@ export interface ValidationResult {
   errors: Record<string, string>;
 }
 
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_QUANTITY = 1_000_000;
+const MAX_UNIT_PRICE = 1_000_000_000;
+const MAX_TOTAL_AMOUNT = 1_000_000_000_000;
+const MAX_STOCK_QTY = 10_000_000;
+
 export function validateSaleInput(input: {
   productName: string;
   quantity: number;
@@ -279,6 +366,7 @@ export function validateSaleInput(input: {
   customerName: string;
   paymentStatus: PaymentStatus;
   amountPaid: number;
+  date?: string;
 }): ValidationResult {
   const errors: Record<string, string> = {};
   if (!input.productName.trim()) {
@@ -286,17 +374,29 @@ export function validateSaleInput(input: {
   }
   if (!Number.isFinite(input.quantity) || input.quantity <= 0) {
     errors.quantity = 'Quantity must be greater than 0.';
+  } else if (input.quantity > MAX_QUANTITY) {
+    errors.quantity = 'Quantity cannot exceed 1,000,000 units.';
   }
   if (!Number.isFinite(input.unitPrice) || input.unitPrice <= 0) {
     errors.unitPrice = 'Unit price must be greater than ₦0.';
+  } else if (input.unitPrice > MAX_UNIT_PRICE) {
+    errors.unitPrice = 'Unit price exceeds the maximum allowed limit.';
   }
   if (!input.customerName.trim()) {
     errors.customerName = 'Customer name is required.';
   }
+  if (input.date !== undefined && !ISO_DATE_RE.test(input.date.trim())) {
+    errors.date = 'Enter a valid transaction date (YYYY-MM-DD).';
+  }
   const total = input.quantity * input.unitPrice;
+  if (Number.isFinite(total) && total > MAX_TOTAL_AMOUNT) {
+    errors.unitPrice = 'Total order amount exceeds the maximum supported value.';
+  }
   if (input.paymentStatus === 'Partial') {
     if (!Number.isFinite(input.amountPaid) || input.amountPaid <= 0) {
       errors.amountPaid = 'Enter the partial amount received.';
+    } else if (total <= 0.01) {
+      errors.amountPaid = 'Partial payment is unavailable for orders of ₦0.01 or less.';
     } else if (input.amountPaid >= total) {
       errors.amountPaid = 'Partial amount must be less than total order amount.';
     }
@@ -319,9 +419,11 @@ export function validateExpenseInput(input: {
   }
   if (!Number.isFinite(input.amount) || input.amount <= 0) {
     errors.amount = 'Amount must be greater than ₦0.';
+  } else if (input.amount > MAX_TOTAL_AMOUNT) {
+    errors.amount = 'Amount exceeds the maximum supported limit.';
   }
-  if (!input.date.trim()) {
-    errors.date = 'Date is required.';
+  if (!ISO_DATE_RE.test(input.date.trim())) {
+    errors.date = 'Enter a valid expense date (YYYY-MM-DD).';
   }
   return { valid: Object.keys(errors).length === 0, errors };
 }
@@ -343,15 +445,23 @@ export function validateProductInput(input: {
   }
   if (!Number.isFinite(input.unitPrice) || input.unitPrice <= 0) {
     errors.unitPrice = 'Selling price must be greater than ₦0.';
+  } else if (input.unitPrice > MAX_UNIT_PRICE) {
+    errors.unitPrice = 'Selling price exceeds the maximum supported limit.';
   }
   if (!Number.isFinite(input.costPrice) || input.costPrice < 0) {
     errors.costPrice = 'Cost price cannot be negative.';
+  } else if (input.costPrice > MAX_UNIT_PRICE) {
+    errors.costPrice = 'Cost price exceeds the maximum supported limit.';
   }
   if (!Number.isFinite(input.stock) || input.stock < 0) {
     errors.stock = 'Stock quantity cannot be negative.';
+  } else if (input.stock > MAX_STOCK_QTY) {
+    errors.stock = 'Stock quantity exceeds the maximum supported limit.';
   }
   if (!Number.isFinite(input.reorderLevel) || input.reorderLevel < 0) {
     errors.reorderLevel = 'Reorder threshold cannot be negative.';
+  } else if (input.reorderLevel > MAX_STOCK_QTY) {
+    errors.reorderLevel = 'Reorder threshold exceeds the maximum supported limit.';
   }
   return { valid: Object.keys(errors).length === 0, errors };
 }

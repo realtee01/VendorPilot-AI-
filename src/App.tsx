@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { lazy, Suspense, useState } from 'react';
 import { NavSection, Product } from './types/business';
 import { BusinessProvider, useBusiness } from './context/BusinessContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -6,13 +6,26 @@ import { AuthView } from './components/AuthView';
 import { EmailVerificationView } from './components/EmailVerificationView';
 import { OnboardingView } from './components/OnboardingView';
 import { Layout } from './components/Layout';
-import { DashboardView } from './components/DashboardView';
-import { SalesView } from './components/SalesView';
-import { ExpensesView } from './components/ExpensesView';
-import { InventoryView } from './components/InventoryView';
-import { AIAssistantView } from './components/AIAssistantView';
-import { SettingsView } from './components/SettingsView';
 import { Modal } from './components/Modal';
+
+const DashboardView = lazy(() =>
+  import('./components/DashboardView').then((m) => ({ default: m.DashboardView }))
+);
+const SalesView = lazy(() =>
+  import('./components/SalesView').then((m) => ({ default: m.SalesView }))
+);
+const ExpensesView = lazy(() =>
+  import('./components/ExpensesView').then((m) => ({ default: m.ExpensesView }))
+);
+const InventoryView = lazy(() =>
+  import('./components/InventoryView').then((m) => ({ default: m.InventoryView }))
+);
+const AIAssistantView = lazy(() =>
+  import('./components/AIAssistantView').then((m) => ({ default: m.AIAssistantView }))
+);
+const SettingsView = lazy(() =>
+  import('./components/SettingsView').then((m) => ({ default: m.SettingsView }))
+);
 
 function WorkspaceLoadingScreen({ label }: { label: string }) {
   return (
@@ -91,6 +104,10 @@ function VendorPilotShell() {
       setRestockError('Enter a restock quantity greater than 0.');
       return;
     }
+    if (restockTarget.stock + Math.round(qty) > 10_000_000) {
+      setRestockError('Resulting stock exceeds the maximum supported quantity (10,000,000).');
+      return;
+    }
     setRestockSubmitting(true);
     try {
       await restockProduct(restockTarget.id, qty);
@@ -144,7 +161,14 @@ function VendorPilotShell() {
           <div className="h-80 rounded-xl border border-slate-200 bg-white p-6" />
         </div>
       ) : (
-        <>
+        <Suspense
+          fallback={
+            <div className="space-y-6" aria-busy="true" aria-label="Loading section">
+              <div className="h-32 rounded-xl border border-slate-200 bg-white p-6" />
+              <div className="h-72 rounded-xl border border-slate-200 bg-white p-6" />
+            </div>
+          }
+        >
           {activeSection === 'dashboard' && (
             <DashboardView onNavigate={setActiveSection} onQuickRestock={handleOpenRestock} />
           )}
@@ -172,7 +196,7 @@ function VendorPilotShell() {
           )}
           {activeSection === 'assistant' && <AIAssistantView />}
           {activeSection === 'settings' && <SettingsView />}
-        </>
+        </Suspense>
       )}
 
       {/* Shared Restock Modal */}
