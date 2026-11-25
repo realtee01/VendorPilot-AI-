@@ -79,6 +79,18 @@ service cloud.firestore {
       ];
     }
 
+    function isValidUsageType(val) {
+      return val is string && val.size() <= 20 && val in ['business', 'personal'];
+    }
+
+    function isValidExperienceLevel(val) {
+      return val is string && val.size() <= 24 && val in ['experienced', 'spreadsheet', 'beginner'];
+    }
+
+    function isValidPrimaryGoal(val) {
+      return val is string && val.size() <= 24 && val in ['sales', 'inventory', 'expenses', 'assistant'];
+    }
+
     // -------------------------------------------------------------------------
     // Entity Validation Blueprints (Anti-Update-Gap across all 6 Collections)
     // -------------------------------------------------------------------------
@@ -90,7 +102,9 @@ service cloud.firestore {
       ]) && data.keys().hasOnly([
         'userId', 'businessId', 'name', 'email', 'businessName', 'businessType',
         'rcNumber', 'address', 'phone', 'currencyCode', 'currencySymbol',
-        'defaultReorderLevel', 'vatEnabled', 'vatRate', 'createdAt', 'updatedAt'
+        'defaultReorderLevel', 'vatEnabled', 'vatRate',
+        'usageType', 'experienceLevel', 'primaryGoal',
+        'createdAt', 'updatedAt'
       ]) &&
       isValidId(data.userId) &&
       data.userId == request.auth.uid &&
@@ -109,6 +123,9 @@ service cloud.firestore {
       data.defaultReorderLevel is number && data.defaultReorderLevel >= 0 && data.defaultReorderLevel <= 100000 &&
       data.vatEnabled is bool &&
       data.vatRate is number && data.vatRate >= 0 && data.vatRate <= 100 &&
+      (!('usageType' in data) || isValidUsageType(data.usageType)) &&
+      (!('experienceLevel' in data) || isValidExperienceLevel(data.experienceLevel)) &&
+      (!('primaryGoal' in data) || isValidPrimaryGoal(data.primaryGoal)) &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
     }
@@ -284,7 +301,8 @@ service cloud.firestore {
         incoming().diff(existing()).affectedKeys().hasOnly([
           'businessId', 'name', 'email', 'businessName', 'businessType',
           'rcNumber', 'address', 'phone', 'currencyCode', 'currencySymbol',
-          'defaultReorderLevel', 'vatEnabled', 'vatRate', 'updatedAt'
+          'defaultReorderLevel', 'vatEnabled', 'vatRate',
+          'usageType', 'experienceLevel', 'primaryGoal', 'updatedAt'
         ]);
 
       allow delete: if false;

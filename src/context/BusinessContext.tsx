@@ -23,6 +23,9 @@ import {
   Customer,
   Expense,
   ExpenseCategory,
+  OnboardingExperienceLevel,
+  OnboardingPrimaryGoal,
+  OnboardingUsageType,
   PaymentMethod,
   PaymentStatus,
   Product,
@@ -58,6 +61,9 @@ interface CreateProfilePayload {
   address: string;
   phone: string;
   currencyCode: CurrencyCode;
+  usageType?: OnboardingUsageType;
+  experienceLevel?: OnboardingExperienceLevel;
+  primaryGoal?: OnboardingPrimaryGoal;
 }
 
 export interface SaleFormPayload {
@@ -307,6 +313,23 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
           ),
           vatEnabled: Boolean(bizData?.vatEnabled ?? userData?.vatEnabled ?? true),
           vatRate: Number(bizData?.vatRate ?? userData?.vatRate ?? 7.5),
+          usageType:
+            userData?.usageType === 'business' || userData?.usageType === 'personal'
+              ? userData.usageType
+              : undefined,
+          experienceLevel:
+            userData?.experienceLevel === 'experienced' ||
+            userData?.experienceLevel === 'spreadsheet' ||
+            userData?.experienceLevel === 'beginner'
+              ? userData.experienceLevel
+              : undefined,
+          primaryGoal:
+            userData?.primaryGoal === 'sales' ||
+            userData?.primaryGoal === 'inventory' ||
+            userData?.primaryGoal === 'expenses' ||
+            userData?.primaryGoal === 'assistant'
+              ? userData.primaryGoal
+              : undefined,
           createdAt: timestampToIsoDate(userData?.createdAt ?? bizData?.createdAt),
         });
         setProfileExists(true);
@@ -571,7 +594,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     const safeLocation = sanitizeText(payload.address, BLUEPRINT_LIMITS.addressMax);
     const safePhone = sanitizeText(payload.phone, BLUEPRINT_LIMITS.phoneMax);
 
-    const userDoc = {
+    const userDoc: Record<string, unknown> = {
       userId: user.uid,
       businessId: user.uid,
       name: safeName,
@@ -589,6 +612,25 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
+
+    if (payload.usageType === 'business' || payload.usageType === 'personal') {
+      userDoc.usageType = payload.usageType;
+    }
+    if (
+      payload.experienceLevel === 'experienced' ||
+      payload.experienceLevel === 'spreadsheet' ||
+      payload.experienceLevel === 'beginner'
+    ) {
+      userDoc.experienceLevel = payload.experienceLevel;
+    }
+    if (
+      payload.primaryGoal === 'sales' ||
+      payload.primaryGoal === 'inventory' ||
+      payload.primaryGoal === 'expenses' ||
+      payload.primaryGoal === 'assistant'
+    ) {
+      userDoc.primaryGoal = payload.primaryGoal;
+    }
 
     const businessDoc = {
       businessId: user.uid,

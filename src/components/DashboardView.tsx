@@ -326,67 +326,96 @@ export function DashboardView({ onNavigate, onQuickRestock }: DashboardViewProps
         </div>
       </section>
 
-      {/* First-Time Guided Quick-Start Strip (visible only when workspace has 0 records) */}
-      {isFreshWorkspace && (
-        <section
-          aria-label="Getting started quick actions"
-          className="grid grid-cols-1 gap-3.5 md:grid-cols-3"
-        >
-          <button
-            type="button"
-            onClick={() => onNavigate('inventory')}
-            className="group flex items-start gap-3.5 rounded-xl border border-slate-200 bg-white p-4 text-left transition-colors hover:border-emerald-300 hover:bg-emerald-50/35 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-emerald-800"
-          >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400">
-              <Package className="h-4.5 w-4.5" aria-hidden="true" />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold text-slate-900 group-hover:text-emerald-700 dark:text-white dark:group-hover:text-emerald-400">
-                1. Add your first product
-              </span>
-              <span className="mt-0.5 block text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                Set unit cost, selling price, and low-stock alert levels for {state.settings.businessName}.
-              </span>
-            </span>
-          </button>
+      {/* First-Time Guided Quick-Start Strip (personalized using onboarding primaryGoal) */}
+      {isFreshWorkspace && (() => {
+        const quickStarts: Array<{
+          id: 'sales' | 'inventory' | 'expenses' | 'assistant';
+          section: NavSection;
+          icon: typeof Package;
+          title: string;
+          desc: string;
+        }> = [
+          {
+            id: 'inventory',
+            section: 'inventory',
+            icon: Package,
+            title: 'Add your first product',
+            desc: `Set unit cost, selling price, and low-stock alert levels for ${state.settings.businessName || 'your store'}.`,
+          },
+          {
+            id: 'sales',
+            section: 'sales',
+            icon: ShoppingBag,
+            title: 'Log your first sale',
+            desc: 'Record paid, partial, or pending orders and watch stock auto-deduct cleanly.',
+          },
+          {
+            id: 'expenses',
+            section: 'expenses',
+            icon: Receipt,
+            title: 'Record your first expense',
+            desc: 'Log rent, salaries, or supplies and unlock your category spending pie chart.',
+          },
+          {
+            id: 'assistant',
+            section: 'assistant',
+            icon: Bot,
+            title: 'Chat with your AI Assistant',
+            desc: `Ask how to track margins, cashflow, or generate summaries anytime, ${firstName}.`,
+          },
+        ];
 
-          <button
-            type="button"
-            onClick={() => onNavigate('sales')}
-            className="group flex items-start gap-3.5 rounded-xl border border-slate-200 bg-white p-4 text-left transition-colors hover:border-emerald-300 hover:bg-emerald-50/35 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-emerald-800"
-          >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400">
-              <ShoppingBag className="h-4.5 w-4.5" aria-hidden="true" />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold text-slate-900 group-hover:text-emerald-700 dark:text-white dark:group-hover:text-emerald-400">
-                2. Log your first sale
-              </span>
-              <span className="mt-0.5 block text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                Record paid, partial, or pending orders and watch stock auto-deduct cleanly.
-              </span>
-            </span>
-          </button>
+        const preferredGoal = state.settings.primaryGoal;
+        const prioritized = preferredGoal
+          ? [
+              ...quickStarts.filter((q) => q.id === preferredGoal),
+              ...quickStarts.filter((q) => q.id !== preferredGoal),
+            ].slice(0, 3)
+          : quickStarts.filter((q) => q.id !== 'expenses');
 
-          <button
-            type="button"
-            onClick={() => onNavigate('assistant')}
-            className="group flex items-start gap-3.5 rounded-xl border border-slate-200 bg-white p-4 text-left transition-colors hover:border-emerald-300 hover:bg-emerald-50/35 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-emerald-800"
+        return (
+          <section
+            aria-label="Getting started quick actions"
+            className="grid grid-cols-1 gap-3.5 md:grid-cols-3"
           >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400">
-              <Bot className="h-4.5 w-4.5" aria-hidden="true" />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold text-slate-900 group-hover:text-emerald-700 dark:text-white dark:group-hover:text-emerald-400">
-                3. Chat with your AI Assistant
-              </span>
-              <span className="mt-0.5 block text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                Ask how to track margins, cashflow, or generate summaries anytime, {firstName}.
-              </span>
-            </span>
-          </button>
-        </section>
-      )}
+            {prioritized.map((item, idx) => {
+              const ItemIcon = item.icon;
+              const isRecommended = preferredGoal === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onNavigate(item.section)}
+                  className={`group flex items-start gap-3.5 rounded-xl border p-4 text-left transition-colors ${
+                    isRecommended
+                      ? 'border-emerald-300/90 bg-emerald-50/40 hover:border-emerald-400 hover:bg-emerald-50/70 dark:border-emerald-800/80 dark:bg-emerald-950/25 dark:hover:border-emerald-700'
+                      : 'border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/35 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-emerald-800'
+                  }`}
+                >
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400">
+                    <ItemIcon className="h-4.5 w-4.5" aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-baseline justify-between gap-2">
+                      <span className="block text-sm font-semibold text-slate-900 group-hover:text-emerald-700 dark:text-white dark:group-hover:text-emerald-400">
+                        {idx + 1}. {item.title}
+                      </span>
+                    </span>
+                    {isRecommended && (
+                      <span className="mt-0.5 block text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+                        Recommended based on your setup
+                      </span>
+                    )}
+                    <span className="mt-0.5 block text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                      {item.desc}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </section>
+        );
+      })()}
 
       {/* 6-Card KPI Grid (Revenue, Expenses, Estimated Net Profit, Outstanding, Total Products, Low-Stock) */}
       <section aria-label="Key business metrics" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

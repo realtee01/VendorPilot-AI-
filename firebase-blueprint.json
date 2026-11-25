@@ -84,6 +84,24 @@
           "type": "number",
           "description": "Standard VAT percentage."
         },
+        "usageType": {
+          "type": "string",
+          "enum": ["business", "personal"],
+          "maxLength": 20,
+          "description": "Optional onboarding answer indicating business or personal usage."
+        },
+        "experienceLevel": {
+          "type": "string",
+          "enum": ["experienced", "spreadsheet", "beginner"],
+          "maxLength": 24,
+          "description": "Optional onboarding answer indicating prior tool experience."
+        },
+        "primaryGoal": {
+          "type": "string",
+          "enum": ["sales", "inventory", "expenses", "assistant"],
+          "maxLength": 24,
+          "description": "Optional onboarding answer indicating first workspace priority."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",

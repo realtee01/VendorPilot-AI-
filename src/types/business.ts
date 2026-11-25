@@ -95,6 +95,10 @@ export interface Expense {
   createdAtMs?: number;
 }
 
+export type OnboardingUsageType = 'business' | 'personal';
+export type OnboardingExperienceLevel = 'experienced' | 'spreadsheet' | 'beginner';
+export type OnboardingPrimaryGoal = 'sales' | 'inventory' | 'expenses' | 'assistant';
+
 export interface BusinessSettings {
   userId: string;
   businessId?: string;
@@ -110,6 +114,9 @@ export interface BusinessSettings {
   defaultReorderLevel: number;
   vatEnabled: boolean;
   vatRate: number;
+  usageType?: OnboardingUsageType;
+  experienceLevel?: OnboardingExperienceLevel;
+  primaryGoal?: OnboardingPrimaryGoal;
   createdAt: string;
 }
 

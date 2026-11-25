@@ -1,4 +1,4 @@
-import React, { useState, lazy, Suspense } from 'react';
+import React, { useEffect, useState, lazy, Suspense } from 'react';
 import { NavSection, Product } from './types/business';
 import { BusinessProvider, useBusiness } from './context/BusinessContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -53,9 +53,16 @@ function VendorPilotShell() {
   } = useBusiness();
   const [activeSection, setActiveSection] = useState<NavSection>('dashboard');
   const [unauthView, setUnauthView] = useState<'landing' | 'signin' | 'signup'>('landing');
+  const [completingOnboarding, setCompletingOnboarding] = useState(false);
   const [saleModalOpen, setSaleModalOpen] = useState(false);
   const [expenseModalOpen, setExpenseModalOpen] = useState(false);
   const [productModalOpen, setProductModalOpen] = useState(false);
+
+  useEffect(() => {
+    if (!user) {
+      setCompletingOnboarding(false);
+    }
+  }, [user]);
 
   // Shared quick restock modal (accessible from Dashboard Low-Stock Alerts AND Inventory)
   const [restockTarget, setRestockTarget] = useState<Product | null>(null);
@@ -102,10 +109,17 @@ function VendorPilotShell() {
     return <WorkspaceLoadingScreen label="Loading your business profile..." />;
   }
 
-  if (!profileExists) {
+  if (!profileExists || completingOnboarding) {
     return (
       <Suspense fallback={<WorkspaceLoadingScreen label="Loading setup..." />}>
-        <OnboardingView />
+        <OnboardingView
+          onStartCompletion={() => setCompletingOnboarding(true)}
+          onEnterDashboard={() => {
+            setCompletingOnboarding(false);
+            setActiveSection('dashboard');
+            window.scrollTo({ top: 0, behavior: 'auto' });
+          }}
+        />
       </Suspense>
     );
   }
