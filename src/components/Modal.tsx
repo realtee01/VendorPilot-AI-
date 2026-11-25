@@ -40,7 +40,7 @@ export function Modal({
       }}
     >
       <div
-        className={`w-full ${maxWidthClass} max-h-[90vh] overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl`}
+        className={`vp-dark-auto w-full ${maxWidthClass} max-h-[90vh] overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900`}
       >
         <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-4">
           <div>

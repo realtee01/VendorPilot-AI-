@@ -5,6 +5,14 @@ import { CURRENCY_OPTIONS, getCurrencySymbol } from '../data/constants';
 import { useBusiness } from '../context/BusinessContext';
 import { formatShortDate } from '../utils/analytics';
 import { isValidEmailFormat } from '../utils/authValidation';
+import {
+  extractFirstName,
+  formatDisplayName,
+  getUserAvatarSeed,
+  getUserAvatarUrl,
+  getUserInitials,
+} from '../utils/avatars';
+import { VendorAvatar } from './VendorAvatar';
 
 export function SettingsView() {
   const { state, user, updateSettings, signOutUser } = useBusiness();
@@ -97,12 +105,31 @@ export function SettingsView() {
 
       <form onSubmit={(e) => void handleSave(e)} className="space-y-6">
         {/* Business Profile */}
-        <section className="rounded-xl border border-slate-200 bg-white p-6">
-          <div className="border-b border-slate-100 pb-4">
-            <h2 className="text-base font-semibold text-slate-900">Business Profile</h2>
-            <p className="mt-0.5 text-sm text-slate-500">
-              Stored securely in Cloud Firestore under your authenticated account.
-            </p>
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex flex-wrap items-center gap-4 border-b border-slate-100 pb-5 dark:border-slate-800">
+            <VendorAvatar
+              seed={getUserAvatarSeed(form.ownerName, form.email || user?.email, user?.uid)}
+              src={getUserAvatarUrl(form.ownerName, form.email || user?.email, user?.uid)}
+              alt={`${formatDisplayName(form.ownerName, form.email || user?.email)} (${getUserInitials(form.ownerName, form.email || user?.email)})`}
+              initials={getUserInitials(form.ownerName, form.email || user?.email)}
+              size={56}
+              showInitialsBadge
+              badgeSize="md"
+              className="h-14 w-14 rounded-2xl ring-2 ring-emerald-100 dark:ring-emerald-900/60"
+            />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                Hi {extractFirstName(form.ownerName, form.email || user?.email)} · Account Owner
+              </p>
+              <h2 className="mt-0.5 font-editorial text-lg font-bold text-slate-900 dark:text-white">
+                {form.businessName.trim() || 'Business Profile'}
+              </h2>
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                {formatDisplayName(form.ownerName, form.email || user?.email)} (
+                {getUserInitials(form.ownerName, form.email || user?.email)}) · Stored securely in
+                Cloud Firestore under your authenticated account.
+              </p>
+            </div>
           </div>
 
           <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">

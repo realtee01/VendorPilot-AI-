@@ -215,24 +215,44 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     throw fatalError;
   }
 
-  // 1. Auth State Listener
+  // 1. Auth State Listener (with iframe-safe fallback if storage init stalls)
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
-      setUser(firebaseUser);
-      setEmailVerified(Boolean(firebaseUser?.emailVerified));
-      setAuthReady(true);
-      if (!firebaseUser) {
-        setProfileExists(false);
-        setProfileLoading(false);
-        setSettings(EMPTY_SETTINGS);
-        setProducts([]);
-        setSales([]);
-        setExpenses([]);
-        setCustomers([]);
-        setLoadedFlags({ products: false, sales: false, expenses: false, customers: false });
+    let resolved = false;
+    const fallbackTimer = window.setTimeout(() => {
+      if (!resolved) {
+        setAuthReady(true);
       }
-    });
-    return () => unsub();
+    }, 3500);
+
+    const unsub = onAuthStateChanged(
+      auth,
+      (firebaseUser) => {
+        resolved = true;
+        window.clearTimeout(fallbackTimer);
+        setUser(firebaseUser);
+        setEmailVerified(Boolean(firebaseUser?.emailVerified));
+        setAuthReady(true);
+        if (!firebaseUser) {
+          setProfileExists(false);
+          setProfileLoading(false);
+          setSettings(EMPTY_SETTINGS);
+          setProducts([]);
+          setSales([]);
+          setExpenses([]);
+          setCustomers([]);
+          setLoadedFlags({ products: false, sales: false, expenses: false, customers: false });
+        }
+      },
+      () => {
+        resolved = true;
+        window.clearTimeout(fallbackTimer);
+        setAuthReady(true);
+      }
+    );
+    return () => {
+      window.clearTimeout(fallbackTimer);
+      unsub();
+    };
   }, []);
 
   const refreshAuthUser = async (): Promise<boolean> => {

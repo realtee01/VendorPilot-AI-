@@ -1,50 +1,40 @@
-import React, { lazy, Suspense, useState } from 'react';
+import React, { useState } from 'react';
 import { NavSection, Product } from './types/business';
 import { BusinessProvider, useBusiness } from './context/BusinessContext';
+import { ThemeProvider } from './context/ThemeContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { LandingPage } from './components/LandingPage';
 import { AuthView } from './components/AuthView';
 import { EmailVerificationView } from './components/EmailVerificationView';
 import { OnboardingView } from './components/OnboardingView';
 import { Layout } from './components/Layout';
+import { DashboardView } from './components/DashboardView';
+import { SalesView } from './components/SalesView';
+import { ExpensesView } from './components/ExpensesView';
+import { InventoryView } from './components/InventoryView';
+import { AIAssistantView } from './components/AIAssistantView';
+import { SettingsView } from './components/SettingsView';
 import { Modal } from './components/Modal';
-
-const DashboardView = lazy(() =>
-  import('./components/DashboardView').then((m) => ({ default: m.DashboardView }))
-);
-const SalesView = lazy(() =>
-  import('./components/SalesView').then((m) => ({ default: m.SalesView }))
-);
-const ExpensesView = lazy(() =>
-  import('./components/ExpensesView').then((m) => ({ default: m.ExpensesView }))
-);
-const InventoryView = lazy(() =>
-  import('./components/InventoryView').then((m) => ({ default: m.InventoryView }))
-);
-const AIAssistantView = lazy(() =>
-  import('./components/AIAssistantView').then((m) => ({ default: m.AIAssistantView }))
-);
-const SettingsView = lazy(() =>
-  import('./components/SettingsView').then((m) => ({ default: m.SettingsView }))
-);
+import { WorkspaceWelcomeIntro } from './components/WorkspaceWelcomeIntro';
 
 function WorkspaceLoadingScreen({ label }: { label: string }) {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-6">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-6 dark:bg-[#090e17]">
       <div className="flex items-center gap-2.5">
         <span
           aria-hidden="true"
-          className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-900 text-emerald-400"
+          className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-900 text-emerald-400 dark:bg-slate-800 dark:ring-1 dark:ring-slate-700"
         >
           <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.4">
             <path d="M4 17L10 7L14 13L20 5" strokeLinecap="round" strokeLinejoin="round" />
             <path d="M16 5H20V9" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </span>
-        <span className="font-display text-lg font-bold tracking-tight text-slate-900">
-          VendorPilot <span className="text-emerald-600">AI</span>
+        <span className="font-display text-lg font-bold tracking-tight text-slate-900 dark:text-white">
+          VendorPilot <span className="text-emerald-600 dark:text-emerald-400">AI</span>
         </span>
       </div>
-      <p className="mt-4 text-sm text-slate-500">{label}</p>
+      <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">{label}</p>
     </div>
   );
 }
@@ -57,9 +47,11 @@ function VendorPilotShell() {
     profileLoading,
     profileExists,
     dataLoading,
+    state,
     restockProduct,
   } = useBusiness();
   const [activeSection, setActiveSection] = useState<NavSection>('dashboard');
+  const [unauthView, setUnauthView] = useState<'landing' | 'signin' | 'signup'>('landing');
   const [saleModalOpen, setSaleModalOpen] = useState(false);
   const [expenseModalOpen, setExpenseModalOpen] = useState(false);
   const [productModalOpen, setProductModalOpen] = useState(false);
@@ -75,7 +67,25 @@ function VendorPilotShell() {
   }
 
   if (!user) {
-    return <AuthView />;
+    if (unauthView === 'landing') {
+      return (
+        <LandingPage
+          onOpenAuth={(mode) => {
+            setUnauthView(mode);
+            window.scrollTo({ top: 0, behavior: 'auto' });
+          }}
+        />
+      );
+    }
+    return (
+      <AuthView
+        initialMode={unauthView}
+        onBackToHome={() => {
+          setUnauthView('landing');
+          window.scrollTo({ top: 0, behavior: 'auto' });
+        }}
+      />
+    );
   }
 
   if (!emailVerified) {
@@ -140,13 +150,28 @@ function VendorPilotShell() {
     onPrimaryAction = () => setProductModalOpen(true);
   }
 
+  const isFirstTimeWorkspace =
+    !dataLoading &&
+    state.sales.length === 0 &&
+    state.expenses.length === 0 &&
+    state.products.length === 0;
+
   return (
-    <Layout
-      activeSection={activeSection}
-      onNavigate={setActiveSection}
-      primaryActionLabel={primaryActionLabel}
-      onPrimaryAction={onPrimaryAction}
-    >
+    <>
+      <WorkspaceWelcomeIntro
+        userId={user.uid}
+        ownerName={state.settings.ownerName || user.displayName || ''}
+        email={state.settings.email || user.email}
+        businessName={state.settings.businessName}
+        businessType={state.settings.businessType}
+        isFirstTimeSetup={isFirstTimeWorkspace}
+      />
+      <Layout
+        activeSection={activeSection}
+        onNavigate={setActiveSection}
+        primaryActionLabel={primaryActionLabel}
+        onPrimaryAction={onPrimaryAction}
+      >
       {dataLoading ? (
         <div className="space-y-6" aria-busy="true" aria-label="Loading business records">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -161,14 +186,7 @@ function VendorPilotShell() {
           <div className="h-80 rounded-xl border border-slate-200 bg-white p-6" />
         </div>
       ) : (
-        <Suspense
-          fallback={
-            <div className="space-y-6" aria-busy="true" aria-label="Loading section">
-              <div className="h-32 rounded-xl border border-slate-200 bg-white p-6" />
-              <div className="h-72 rounded-xl border border-slate-200 bg-white p-6" />
-            </div>
-          }
-        >
+        <>
           {activeSection === 'dashboard' && (
             <DashboardView onNavigate={setActiveSection} onQuickRestock={handleOpenRestock} />
           )}
@@ -196,7 +214,7 @@ function VendorPilotShell() {
           )}
           {activeSection === 'assistant' && <AIAssistantView />}
           {activeSection === 'settings' && <SettingsView />}
-        </Suspense>
+        </>
       )}
 
       {/* Shared Restock Modal */}
@@ -263,15 +281,18 @@ function VendorPilotShell() {
         )}
       </Modal>
     </Layout>
+    </>
   );
 }
 
 export default function App() {
   return (
     <ErrorBoundary>
-      <BusinessProvider>
-        <VendorPilotShell />
-      </BusinessProvider>
+      <ThemeProvider>
+        <BusinessProvider>
+          <VendorPilotShell />
+        </BusinessProvider>
+      </ThemeProvider>
     </ErrorBoundary>
   );
 }

@@ -3,6 +3,15 @@ import { AlertCircle, LogOut } from 'lucide-react';
 import { CurrencyCode } from '../types/business';
 import { BUSINESS_TYPE_SUGGESTIONS, CURRENCY_OPTIONS } from '../data/constants';
 import { useBusiness } from '../context/BusinessContext';
+import { ThemeToggleButton } from '../context/ThemeContext';
+import {
+  extractFirstName,
+  formatDisplayName,
+  getUserAvatarSeed,
+  getUserAvatarUrl,
+  getUserInitials,
+} from '../utils/avatars';
+import { VendorAvatar } from './VendorAvatar';
 
 export function OnboardingView() {
   const { user, createBusinessProfile, signOutUser } = useBusiness();
@@ -44,44 +53,71 @@ export function OnboardingView() {
     }
   };
 
+  const previewFirstName = extractFirstName(name, user?.email);
+  const previewFullName = formatDisplayName(name, user?.email);
+  const previewInitials = getUserInitials(name, user?.email);
+  const previewSeed = getUserAvatarSeed(name, user?.email, user?.uid);
+  const previewAvatarUrl = getUserAvatarUrl(name, user?.email, user?.uid);
+
   return (
-    <div className="flex min-h-screen flex-col justify-center bg-slate-50 px-4 py-12 sm:px-6">
+    <div className="vp-dark-auto flex min-h-screen flex-col justify-center bg-slate-50 px-4 py-12 dark:bg-[#090e17] sm:px-6">
       <div className="mx-auto w-full max-w-lg">
         <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <span
               aria-hidden="true"
-              className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-emerald-400"
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-emerald-400 dark:bg-slate-800 dark:ring-1 dark:ring-slate-700"
             >
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.4">
                 <path d="M4 17L10 7L14 13L20 5" strokeLinecap="round" strokeLinejoin="round" />
                 <path d="M16 5H20V9" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </span>
-            <span className="font-display text-base font-bold tracking-tight text-slate-900">
-              VendorPilot <span className="text-emerald-600">AI</span>
+            <span className="font-editorial text-base font-semibold tracking-normal text-slate-900 dark:text-white">
+              VendorPilot <span className="text-emerald-600 dark:text-emerald-400">AI</span>
             </span>
           </div>
 
-          <button
-            type="button"
-            onClick={() => void signOutUser()}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-900"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            Sign out
-          </button>
+          <div className="flex items-center gap-3">
+            <ThemeToggleButton />
+            <button
+              type="button"
+              onClick={() => void signOutUser()}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-900"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Sign out
+            </button>
+          </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-7">
-          <p className="text-xs text-slate-500">
-            Signed in as <span className="font-medium text-slate-700">{user?.email}</span>
-          </p>
-          <h1 className="mt-1 font-display text-xl font-semibold text-slate-900">
-            Create your business profile
+        <div className="rounded-2xl border border-slate-200 bg-white p-7 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center gap-3.5 rounded-xl border border-emerald-200/70 bg-gradient-to-r from-emerald-50/90 via-white to-teal-50/50 p-3.5 dark:border-emerald-900/50 dark:from-emerald-950/35 dark:via-slate-900 dark:to-slate-900">
+            <VendorAvatar
+              seed={previewSeed}
+              src={previewAvatarUrl}
+              alt={`${previewFullName} (${previewInitials})`}
+              initials={previewInitials}
+              size={48}
+              showInitialsBadge
+              badgeSize="sm"
+              className="h-12 w-12 rounded-xl ring-2 ring-white shadow-xs dark:ring-slate-800"
+            />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                {previewFullName} ({previewInitials})
+              </p>
+              <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                Signed in as <span className="font-medium text-slate-700 dark:text-slate-200">{user?.email}</span>
+              </p>
+            </div>
+          </div>
+
+          <h1 className="mt-5 font-editorial text-2xl font-bold tracking-normal text-slate-900 dark:text-white">
+            Hi {previewFirstName}, let&apos;s set up your business
           </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Enter your business details to initialize your private Cloud Firestore workspace.
+          <p className="mt-1 font-hand text-lg text-slate-500 dark:text-slate-400">
+            Enter your details below so VendorPilot AI can personalize your private cloud ledger.
           </p>
 
           {error && (

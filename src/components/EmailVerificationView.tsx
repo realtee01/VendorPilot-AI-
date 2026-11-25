@@ -2,7 +2,16 @@ import React, { useState } from 'react';
 import { sendEmailVerification } from 'firebase/auth';
 import { AlertCircle, CheckCircle2, LogOut, MailCheck, RefreshCw } from 'lucide-react';
 import { useBusiness } from '../context/BusinessContext';
+import { ThemeToggleButton } from '../context/ThemeContext';
 import { mapFirebaseAuthError } from '../utils/authValidation';
+import {
+  extractFirstName,
+  formatDisplayName,
+  getUserAvatarSeed,
+  getUserAvatarUrl,
+  getUserInitials,
+} from '../utils/avatars';
+import { VendorAvatar } from './VendorAvatar';
 
 export function EmailVerificationView() {
   const { user, refreshAuthUser, signOutUser } = useBusiness();
@@ -46,46 +55,67 @@ export function EmailVerificationView() {
     }
   };
 
+  const firstName = extractFirstName(user?.displayName, user?.email);
+  const fullName = formatDisplayName(user?.displayName, user?.email);
+  const initials = getUserInitials(user?.displayName, user?.email);
+  const avatarSeed = getUserAvatarSeed(user?.displayName, user?.email, user?.uid);
+  const avatarUrl = getUserAvatarUrl(user?.displayName, user?.email, user?.uid);
+
   return (
-    <div className="min-h-screen bg-slate-50 px-6 py-12 text-slate-900">
+    <div className="vp-dark-auto min-h-screen bg-slate-50 px-6 py-12 text-slate-900 dark:bg-[#090e17] dark:text-slate-100">
       <div className="mx-auto max-w-lg">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <span
               aria-hidden="true"
-              className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-900 text-emerald-400"
+              className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-900 text-emerald-400 dark:bg-slate-800 dark:ring-1 dark:ring-slate-700"
             >
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.4">
                 <path d="M4 17L10 7L14 13L20 5" strokeLinecap="round" strokeLinejoin="round" />
                 <path d="M16 5H20V9" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </span>
-            <span className="font-display text-lg font-bold tracking-tight text-slate-900">
-              VendorPilot <span className="text-emerald-600">AI</span>
+            <span className="font-editorial text-lg font-semibold tracking-normal text-slate-900 dark:text-white">
+              VendorPilot <span className="text-emerald-600 dark:text-emerald-400">AI</span>
             </span>
           </div>
 
-          <button
-            type="button"
-            onClick={() => void signOutUser()}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 transition-colors hover:text-slate-900"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            Sign out
-          </button>
+          <div className="flex items-center gap-3">
+            <ThemeToggleButton />
+            <button
+              type="button"
+              onClick={() => void signOutUser()}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 transition-colors hover:text-slate-900"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Sign out
+            </button>
+          </div>
         </div>
 
-        <div className="mt-8 rounded-xl border border-slate-200 bg-white p-8">
-          <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
-            <MailCheck className="h-5 w-5" aria-hidden="true" />
+        <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-8 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center gap-3.5">
+            <VendorAvatar
+              seed={avatarSeed}
+              src={avatarUrl}
+              alt={`${fullName} (${initials})`}
+              initials={initials}
+              size={48}
+              showInitialsBadge
+              badgeSize="sm"
+              className="h-12 w-12 rounded-xl ring-1 ring-slate-200 dark:ring-slate-700"
+            />
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400">
+              <MailCheck className="h-5 w-5" aria-hidden="true" />
+            </div>
           </div>
 
-          <h1 className="mt-5 font-display text-2xl font-bold tracking-tight text-slate-900">
-            Verify your email address
+          <h1 className="mt-5 font-editorial text-2xl font-bold tracking-normal text-slate-900 dark:text-white">
+            Hi {firstName}, verify your email
           </h1>
-          <p className="mt-2 text-sm leading-relaxed text-slate-600">
+          <p className="mt-2 font-hand text-lg leading-relaxed text-slate-600 dark:text-slate-300">
             We sent a verification link to{' '}
-            <strong className="font-medium text-slate-900">{user?.email}</strong>. Please click
+            <strong className="font-medium text-slate-900 dark:text-white">{user?.email}</strong>. Please click
             that link to activate your private business ledger, then continue below.
           </p>
 

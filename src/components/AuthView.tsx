@@ -7,8 +7,9 @@ import {
   signInWithPopup,
   updateProfile,
 } from 'firebase/auth';
-import { AlertCircle, CheckCircle2, Eye, EyeOff, ShieldCheck } from 'lucide-react';
+import { AlertCircle, ArrowLeft, CheckCircle2, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { auth, googleProvider } from '../firebase';
+import { ThemeToggleButton } from '../context/ThemeContext';
 import {
   mapFirebaseAuthError,
   validateResetEmail,
@@ -18,8 +19,13 @@ import {
 
 type AuthMode = 'signin' | 'signup' | 'reset';
 
-export function AuthView() {
-  const [mode, setMode] = useState<AuthMode>('signin');
+interface AuthViewProps {
+  initialMode?: 'signin' | 'signup';
+  onBackToHome?: () => void;
+}
+
+export function AuthView({ initialMode = 'signin', onBackToHome }: AuthViewProps) {
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -133,30 +139,46 @@ export function AuthView() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="vp-dark-auto min-h-screen bg-slate-50 text-slate-900 dark:bg-[#090e17] dark:text-slate-100">
       <div className="mx-auto grid min-h-screen max-w-6xl grid-cols-1 items-center gap-12 px-6 py-10 lg:grid-cols-12 lg:px-10">
         {/* Left Editorial / Product Column */}
         <div className="space-y-8 lg:col-span-6">
+          <div className="flex items-center justify-between gap-4">
+            {onBackToHome ? (
+              <button
+                type="button"
+                onClick={onBackToHome}
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 transition-colors hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-emerald-600 dark:text-slate-400 dark:hover:text-white"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>Back to overview</span>
+              </button>
+            ) : (
+              <span />
+            )}
+            <ThemeToggleButton />
+          </div>
+
           <div className="flex items-center gap-2.5">
             <span
               aria-hidden="true"
-              className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-900 text-emerald-400"
+              className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-900 text-emerald-400 dark:bg-slate-800 dark:ring-1 dark:ring-slate-700"
             >
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.4">
                 <path d="M4 17L10 7L14 13L20 5" strokeLinecap="round" strokeLinejoin="round" />
                 <path d="M16 5H20V9" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </span>
-            <span className="font-display text-lg font-bold tracking-tight text-slate-900">
-              VendorPilot <span className="text-emerald-600">AI</span>
+            <span className="font-editorial text-lg font-semibold tracking-normal text-slate-900 dark:text-white">
+              VendorPilot <span className="text-emerald-600 dark:text-emerald-400">AI</span>
             </span>
           </div>
 
           <div className="max-w-xl space-y-4">
-            <h1 className="font-display text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
+            <h1 className="font-editorial text-3xl leading-[1.15] font-bold tracking-normal text-slate-900 sm:text-4xl">
               Run your SME sales, expenses, and stock from one secure ledger.
             </h1>
-            <p className="text-base leading-relaxed text-slate-600">
+            <p className="font-hand text-xl leading-relaxed text-slate-600">
               Built for Nigerian wholesale and retail businesses. Track every Naira of revenue,
               monitor unpaid customer balances, control reorder levels, and get AI business insights
               backed by your private cloud records.
@@ -438,7 +460,7 @@ export function AuthView() {
               <button
                 type="submit"
                 disabled={busy}
-                className="flex h-11 w-full items-center justify-center rounded-lg bg-slate-900 px-4 text-sm font-medium text-white transition-colors hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex h-11 w-full items-center justify-center rounded-lg bg-slate-900 px-4 text-sm font-medium text-white transition-colors hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
               >
                 {submittingEmail
                   ? mode === 'signin'

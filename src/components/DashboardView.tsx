@@ -8,7 +8,19 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { ArrowRight, AlertTriangle, Check, Download } from 'lucide-react';
+import {
+  ArrowRight,
+  AlertTriangle,
+  Bot,
+  Check,
+  Clock,
+  Download,
+  Package,
+  Receipt,
+  ShoppingBag,
+  TrendingUp,
+  Wallet,
+} from 'lucide-react';
 import { DashboardPeriod, NavSection, Product, SalesRange } from '../types/business';
 import { useBusiness } from '../context/BusinessContext';
 import {
@@ -26,6 +38,14 @@ import {
   buildDashboardReportFilename,
   triggerCsvDownload,
 } from '../utils/reportCsv';
+import {
+  extractFirstName,
+  formatDisplayName,
+  getUserAvatarSeed,
+  getUserAvatarUrl,
+  getUserInitials,
+} from '../utils/avatars';
+import { VendorAvatar } from './VendorAvatar';
 
 interface DashboardViewProps {
   onNavigate: (section: NavSection) => void;
@@ -46,12 +66,22 @@ const RANGE_OPTIONS: Array<{ value: SalesRange; label: string }> = [
 ];
 
 export function DashboardView({ onNavigate, onQuickRestock }: DashboardViewProps) {
-  const { state, lowStockProducts } = useBusiness();
+  const { user, state, lowStockProducts } = useBusiness();
   const [period, setPeriod] = useState<DashboardPeriod>('monthly');
   const [range, setRange] = useState<SalesRange>('30d');
   const [downloaded, setDownloaded] = useState(false);
   const downloadTimerRef = useRef<number | null>(null);
   const symbol = state.settings.currencySymbol || '₦';
+
+  const ownerRawName = state.settings.ownerName || user?.displayName || '';
+  const ownerEmail = state.settings.email || user?.email || '';
+  const firstName = extractFirstName(ownerRawName, ownerEmail);
+  const fullName = formatDisplayName(ownerRawName, ownerEmail);
+  const initials = getUserInitials(ownerRawName, ownerEmail);
+  const avatarSeed = getUserAvatarSeed(ownerRawName, ownerEmail, user?.uid);
+  const avatarUrl = getUserAvatarUrl(ownerRawName, ownerEmail, user?.uid);
+  const isFreshWorkspace =
+    state.sales.length === 0 && state.expenses.length === 0 && state.products.length === 0;
 
   useEffect(() => {
     return () => {
@@ -127,19 +157,31 @@ export function DashboardView({ onNavigate, onQuickRestock }: DashboardViewProps
       label: 'Total Revenue',
       value: formatNaira(periodMetrics.totalRevenue, false, symbol),
       detail: `${periodMetrics.totalOrders} order${periodMetrics.totalOrders === 1 ? '' : 's'} · ${formatNaira(periodMetrics.collectedRevenue, true, symbol)} collected`,
-      emphasis: 'text-slate-900',
+      emphasis: 'text-slate-900 dark:text-white',
+      icon: Wallet,
+      iconTone: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400',
     },
     {
       label: 'Total Expenses',
       value: formatNaira(periodMetrics.totalExpenses, false, symbol),
       detail: `${periodData.expenses.length} operational entr${periodData.expenses.length === 1 ? 'y' : 'ies'} logged`,
-      emphasis: 'text-slate-900',
+      emphasis: 'text-slate-900 dark:text-white',
+      icon: Receipt,
+      iconTone: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
     },
     {
       label: 'Estimated Net Profit',
       value: formatNaira(periodMetrics.netProfit, false, symbol),
       detail: `${periodMetrics.profitMarginPct}% estimated margin`,
-      emphasis: periodMetrics.netProfit >= 0 ? 'text-emerald-700' : 'text-rose-700',
+      emphasis:
+        periodMetrics.netProfit >= 0
+          ? 'text-emerald-700 dark:text-emerald-400'
+          : 'text-rose-700 dark:text-rose-400',
+      icon: TrendingUp,
+      iconTone:
+        periodMetrics.netProfit >= 0
+          ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400'
+          : 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-400',
     },
     {
       label: 'Outstanding Payments',
@@ -148,13 +190,23 @@ export function DashboardView({ onNavigate, onQuickRestock }: DashboardViewProps
         periodMetrics.unpaidOrderCount === 0
           ? 'All orders in period settled'
           : `${periodMetrics.unpaidOrderCount} order${periodMetrics.unpaidOrderCount > 1 ? 's' : ''} awaiting balance`,
-      emphasis: periodMetrics.outstandingPayments > 0 ? 'text-amber-700' : 'text-slate-900',
+      emphasis:
+        periodMetrics.outstandingPayments > 0
+          ? 'text-amber-700 dark:text-amber-400'
+          : 'text-slate-900 dark:text-white',
+      icon: Clock,
+      iconTone:
+        periodMetrics.outstandingPayments > 0
+          ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-400'
+          : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
     },
     {
       label: 'Total Products',
       value: String(periodMetrics.totalProducts),
       detail: `Stock value ${formatNaira(periodMetrics.inventoryValuation, true, symbol)}`,
-      emphasis: 'text-slate-900',
+      emphasis: 'text-slate-900 dark:text-white',
+      icon: Package,
+      iconTone: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
     },
     {
       label: 'Low-Stock Products',
@@ -165,88 +217,202 @@ export function DashboardView({ onNavigate, onQuickRestock }: DashboardViewProps
           : periodMetrics.lowStockCount > 0
             ? 'At or below reorder threshold'
             : 'All inventory levels healthy',
-      emphasis: periodMetrics.lowStockCount > 0 ? 'text-amber-700' : 'text-emerald-700',
+      emphasis:
+        periodMetrics.lowStockCount > 0
+          ? 'text-amber-700 dark:text-amber-400'
+          : 'text-emerald-700 dark:text-emerald-400',
+      icon: AlertTriangle,
+      iconTone:
+        periodMetrics.lowStockCount > 0
+          ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-400'
+          : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400',
     },
   ];
 
   return (
     <div className="space-y-6">
-      {/* Business Context + Daily / Weekly / Monthly Date Filter */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4 text-sm text-slate-600">
-        <div>
-          <p className="leading-snug">
-            <strong className="font-semibold text-slate-900">{state.settings.businessName}</strong>
-            {state.settings.businessType && (
-              <>
-                <span className="mx-2 text-slate-300" aria-hidden="true">·</span>
-                <span>{state.settings.businessType}</span>
-              </>
-            )}
-          </p>
-          <p className="mt-0.5 text-xs text-slate-500">Showing metrics for {periodData.periodLabel}</p>
-        </div>
+      {/* Personalized Welcome Banner + Period & Report Controls */}
+      <section
+        aria-label="Business owner welcome"
+        className="relative overflow-hidden rounded-2xl border border-emerald-200/75 bg-gradient-to-br from-emerald-50/90 via-white to-teal-50/55 p-5 sm:p-6 dark:border-emerald-900/50 dark:from-emerald-950/40 dark:via-slate-900 dark:to-slate-900"
+      >
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -top-16 -right-16 h-52 w-52 rounded-full bg-[radial-gradient(circle,rgba(16,185,129,0.22),transparent_70%)] blur-2xl"
+        />
 
-        <div className="flex flex-wrap items-center gap-3">
-          <div
-            className="flex items-center gap-1 rounded-lg bg-slate-100 p-1"
-            role="group"
-            aria-label="Dashboard performance period"
-          >
-            {PERIOD_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => handlePeriodChange(opt.value)}
-                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
-                  period === opt.value
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
+        <div className="relative z-10 flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex items-start gap-4">
+            <VendorAvatar
+              seed={avatarSeed}
+              src={avatarUrl}
+              alt={`${fullName} (${initials})`}
+              initials={initials}
+              size={58}
+              showInitialsBadge
+              badgeSize="md"
+              className="h-14 w-14 rounded-2xl ring-2 ring-white shadow-sm dark:ring-slate-800"
+            />
+            <div className="min-w-0">
+              <h2 className="font-editorial text-2xl leading-tight font-bold tracking-normal text-slate-950 dark:text-white sm:text-[1.7rem]">
+                Hi {firstName}!
+              </h2>
+              <p className="mt-1 font-hand text-lg leading-snug text-slate-700 dark:text-slate-300">
+                {isFreshWorkspace
+                  ? `Welcome to ${state.settings.businessName || 'your business'} — your private ledger is ready.`
+                  : `Welcome back to ${state.settings.businessName || 'your business'}. Here is your live snapshot.`}
+              </p>
+              <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+                <strong className="font-semibold text-slate-800 dark:text-slate-200">
+                  {fullName} ({initials})
+                </strong>
+                {state.settings.businessType && (
+                  <>
+                    <span className="mx-1.5 text-slate-300 dark:text-slate-600" aria-hidden="true">·</span>
+                    <span>{state.settings.businessType}</span>
+                  </>
+                )}
+                <span className="mx-1.5 text-slate-300 dark:text-slate-600" aria-hidden="true">·</span>
+                <span>Showing {periodData.periodLabel}</span>
+              </p>
+            </div>
           </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div
+              className="flex items-center gap-1 rounded-xl border border-slate-200/80 bg-white/90 p-1 shadow-2xs dark:border-slate-800 dark:bg-slate-950/70"
+              role="group"
+              aria-label="Dashboard performance period"
+            >
+              {PERIOD_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => handlePeriodChange(opt.value)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                    period === opt.value
+                      ? 'bg-slate-900 text-white shadow-2xs dark:bg-emerald-600 dark:text-white'
+                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleDownloadReport}
+              title={`Export ${periodData.periodLabel} performance data as CSV`}
+              className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200/90 bg-white px-3.5 text-xs font-medium text-slate-700 transition-colors hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-emerald-700 whitespace-nowrap"
+            >
+              {downloaded ? (
+                <Check className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
+              ) : (
+                <Download className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
+              )}
+              <span>{downloaded ? 'Report Downloaded' : 'Download Report'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onNavigate('assistant')}
+              className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-emerald-600/10 px-3.5 text-xs font-semibold text-emerald-800 transition-colors hover:bg-emerald-600/15 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25 whitespace-nowrap"
+            >
+              <span>Ask AI Assistant</span>
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* First-Time Guided Quick-Start Strip (visible only when workspace has 0 records) */}
+      {isFreshWorkspace && (
+        <section
+          aria-label="Getting started quick actions"
+          className="grid grid-cols-1 gap-3.5 md:grid-cols-3"
+        >
+          <button
+            type="button"
+            onClick={() => onNavigate('inventory')}
+            className="group flex items-start gap-3.5 rounded-xl border border-slate-200 bg-white p-4 text-left transition-colors hover:border-emerald-300 hover:bg-emerald-50/35 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-emerald-800"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400">
+              <Package className="h-4.5 w-4.5" aria-hidden="true" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-slate-900 group-hover:text-emerald-700 dark:text-white dark:group-hover:text-emerald-400">
+                1. Add your first product
+              </span>
+              <span className="mt-0.5 block text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                Set unit cost, selling price, and low-stock alert levels for {state.settings.businessName}.
+              </span>
+            </span>
+          </button>
 
           <button
             type="button"
-            onClick={handleDownloadReport}
-            title={`Export ${periodData.periodLabel} performance data as CSV`}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-colors hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800 whitespace-nowrap"
+            onClick={() => onNavigate('sales')}
+            className="group flex items-start gap-3.5 rounded-xl border border-slate-200 bg-white p-4 text-left transition-colors hover:border-emerald-300 hover:bg-emerald-50/35 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-emerald-800"
           >
-            {downloaded ? (
-              <Check className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
-            ) : (
-              <Download className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
-            )}
-            <span>{downloaded ? 'Report Downloaded' : 'Download Report'}</span>
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400">
+              <ShoppingBag className="h-4.5 w-4.5" aria-hidden="true" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-slate-900 group-hover:text-emerald-700 dark:text-white dark:group-hover:text-emerald-400">
+                2. Log your first sale
+              </span>
+              <span className="mt-0.5 block text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                Record paid, partial, or pending orders and watch stock auto-deduct cleanly.
+              </span>
+            </span>
           </button>
 
           <button
             type="button"
             onClick={() => onNavigate('assistant')}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700 transition-colors hover:text-emerald-800 whitespace-nowrap"
+            className="group flex items-start gap-3.5 rounded-xl border border-slate-200 bg-white p-4 text-left transition-colors hover:border-emerald-300 hover:bg-emerald-50/35 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-emerald-800"
           >
-            <span>Ask AI Assistant</span>
-            <ArrowRight className="h-4 w-4" />
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400">
+              <Bot className="h-4.5 w-4.5" aria-hidden="true" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-slate-900 group-hover:text-emerald-700 dark:text-white dark:group-hover:text-emerald-400">
+                3. Chat with your AI Assistant
+              </span>
+              <span className="mt-0.5 block text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                Ask how to track margins, cashflow, or generate summaries anytime, {firstName}.
+              </span>
+            </span>
           </button>
-        </div>
-      </div>
+        </section>
+      )}
 
       {/* 6-Card KPI Grid (Revenue, Expenses, Estimated Net Profit, Outstanding, Total Products, Low-Stock) */}
       <section aria-label="Key business metrics" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {kpis.map((kpi) => (
-          <div
-            key={kpi.label}
-            className="rounded-xl border border-slate-200 bg-white p-5"
-          >
-            <p className="text-sm font-medium text-slate-500">{kpi.label}</p>
-            <p className={`mt-2 font-mono text-2xl font-semibold tracking-tight tabular-nums ${kpi.emphasis}`}>
-              {kpi.value}
-            </p>
-            <p className="mt-2 text-xs text-slate-500">{kpi.detail}</p>
-          </div>
-        ))}
+        {kpis.map((kpi) => {
+          const KpiIcon = kpi.icon;
+          return (
+            <div
+              key={kpi.label}
+              className="rounded-2xl border border-slate-200/90 bg-white p-5 transition-colors hover:border-emerald-200/90 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-emerald-900/70"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{kpi.label}</p>
+                <span
+                  aria-hidden="true"
+                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${kpi.iconTone}`}
+                >
+                  <KpiIcon className="h-4 w-4" />
+                </span>
+              </div>
+              <p className={`mt-2.5 font-mono text-2xl font-semibold tracking-tight tabular-nums ${kpi.emphasis}`}>
+                {kpi.value}
+              </p>
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{kpi.detail}</p>
+            </div>
+          );
+        })}
       </section>
 
       {/* Main Chart + Low-Stock Alerts */}

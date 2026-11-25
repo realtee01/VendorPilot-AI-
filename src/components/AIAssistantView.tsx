@@ -19,6 +19,7 @@ import {
   FallbackGuide,
   QuestionTopic,
 } from '../utils/localAssistantEngine';
+import { extractFirstName } from '../utils/avatars';
 
 interface AssistantThreadMessage extends ChatMessage {
   followUps?: string[];
@@ -144,15 +145,15 @@ export function AIAssistantView() {
     [state.settings, state.sales, state.expenses, state.products]
   );
 
-  const firstName = state.settings.ownerName.trim().split(' ')[0] || 'there';
+  const firstName = extractFirstName(state.settings.ownerName, state.settings.email);
   const businessName = state.settings.businessName.trim() || 'your business';
   const hasRecords =
     state.sales.length > 0 || state.expenses.length > 0 || state.products.length > 0;
 
   const buildWelcomeContent = () =>
     hasRecords
-      ? `Hello ${firstName}. Welcome to **${businessName}**'s AI Business Assistant. I analyse your actual Cloud Firestore sales, expenses, and inventory records and will never invent figures.\n\nRight now, all-time revenue is **${formatNaira(report.allTime.totalRevenue, false, currencySymbol)}**, expenses are **${formatNaira(report.allTime.totalExpenses, false, currencySymbol)}**, and estimated net profit is **${formatNaira(report.allTime.netProfit, false, currencySymbol)}** (${report.allTime.profitMarginPct}% margin). This month (${report.monthlySummary.label}), you have **${formatNaira(report.monthlySummary.revenue, false, currencySymbol)}** across **${report.monthlySummary.orderCount}** order${report.monthlySummary.orderCount === 1 ? '' : 's'} and **${report.allTime.lowStockCount}** SKU${report.allTime.lowStockCount === 1 ? '' : 's'} needing restock attention. Ask a question below or generate a Weekly or Monthly Summary.`
-      : `Hello ${firstName}. Welcome to **${businessName}**'s AI Business Assistant. I analyse your actual Cloud Firestore sales, expenses, and inventory records and will never invent figures.\n\nYou have not recorded any sales, expenses, or products yet. Ask me how to use any feature on the website right now, or once you add your first records, ask about revenue, expenses, profit, top-selling products, customers, low-stock alerts, or weekly and monthly summaries.`;
+      ? `Hi ${firstName}! Welcome to **${businessName}**'s AI Business Assistant. I analyse your actual Cloud Firestore sales, expenses, and inventory records and will never invent figures.\n\nRight now, all-time revenue is **${formatNaira(report.allTime.totalRevenue, false, currencySymbol)}**, expenses are **${formatNaira(report.allTime.totalExpenses, false, currencySymbol)}**, and estimated net profit is **${formatNaira(report.allTime.netProfit, false, currencySymbol)}** (${report.allTime.profitMarginPct}% margin). This month (${report.monthlySummary.label}), you have **${formatNaira(report.monthlySummary.revenue, false, currencySymbol)}** across **${report.monthlySummary.orderCount}** order${report.monthlySummary.orderCount === 1 ? '' : 's'} and **${report.allTime.lowStockCount}** SKU${report.allTime.lowStockCount === 1 ? '' : 's'} needing restock attention. Ask a question below or generate a Weekly or Monthly Summary.`
+      : `Hi ${firstName}! Welcome to **${businessName}**'s AI Business Assistant. I analyse your actual Cloud Firestore sales, expenses, and inventory records and will never invent figures.\n\nYou have not recorded any sales, expenses, or products yet. Ask me how to use any feature on the website right now, or once you add your first records, ask about revenue, expenses, profit, top-selling products, customers, low-stock alerts, or weekly and monthly summaries.`;
 
   const [messages, setMessages] = useState<AssistantThreadMessage[]>(() => [
     {
@@ -344,7 +345,7 @@ export function AIAssistantView() {
                 </div>
 
                 {msg.role === 'user' ? (
-                  <div className="max-w-[85%] rounded-xl bg-slate-900 px-4 py-3 text-sm leading-relaxed text-white">
+                  <div className="max-w-[85%] rounded-xl bg-slate-900 px-4 py-3 text-sm leading-relaxed text-white dark:bg-emerald-600">
                     {msg.content}
                   </div>
                 ) : msg.isFallback && msg.fallbackGuide ? (
@@ -465,7 +466,7 @@ export function AIAssistantView() {
                 onClick={() => setActiveTopic(topic)}
                 className={`shrink-0 rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap ${
                   activeTopic === topic
-                    ? 'bg-slate-900 text-white'
+                    ? 'bg-slate-900 text-white dark:bg-emerald-600'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70 hover:text-slate-900'
                 }`}
               >
