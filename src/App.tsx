@@ -1,21 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
 import { NavSection, Product } from './types/business';
 import { BusinessProvider, useBusiness } from './context/BusinessContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { LandingPage } from './components/LandingPage';
-import { AuthView } from './components/AuthView';
-import { EmailVerificationView } from './components/EmailVerificationView';
-import { OnboardingView } from './components/OnboardingView';
-import { Layout } from './components/Layout';
-import { DashboardView } from './components/DashboardView';
-import { SalesView } from './components/SalesView';
-import { ExpensesView } from './components/ExpensesView';
-import { InventoryView } from './components/InventoryView';
-import { AIAssistantView } from './components/AIAssistantView';
-import { SettingsView } from './components/SettingsView';
 import { Modal } from './components/Modal';
-import { WorkspaceWelcomeIntro } from './components/WorkspaceWelcomeIntro';
+
+const LandingPage = lazy(() => import('./components/LandingPage').then(m => ({ default: m.LandingPage })));
+const AuthView = lazy(() => import('./components/AuthView').then(m => ({ default: m.AuthView })));
+const EmailVerificationView = lazy(() => import('./components/EmailVerificationView').then(m => ({ default: m.EmailVerificationView })));
+const OnboardingView = lazy(() => import('./components/OnboardingView').then(m => ({ default: m.OnboardingView })));
+const Layout = lazy(() => import('./components/Layout').then(m => ({ default: m.Layout })));
+const DashboardView = lazy(() => import('./components/DashboardView').then(m => ({ default: m.DashboardView })));
+const SalesView = lazy(() => import('./components/SalesView').then(m => ({ default: m.SalesView })));
+const ExpensesView = lazy(() => import('./components/ExpensesView').then(m => ({ default: m.ExpensesView })));
+const InventoryView = lazy(() => import('./components/InventoryView').then(m => ({ default: m.InventoryView })));
+const AIAssistantView = lazy(() => import('./components/AIAssistantView').then(m => ({ default: m.AIAssistantView })));
+const SettingsView = lazy(() => import('./components/SettingsView').then(m => ({ default: m.SettingsView })));
+const WorkspaceWelcomeIntro = lazy(() => import('./components/WorkspaceWelcomeIntro').then(m => ({ default: m.WorkspaceWelcomeIntro })));
 
 function WorkspaceLoadingScreen({ label }: { label: string }) {
   return (
@@ -67,29 +68,34 @@ function VendorPilotShell() {
   }
 
   if (!user) {
-    if (unauthView === 'landing') {
-      return (
-        <LandingPage
-          onOpenAuth={(mode) => {
-            setUnauthView(mode);
-            window.scrollTo({ top: 0, behavior: 'auto' });
-          }}
-        />
-      );
-    }
     return (
-      <AuthView
-        initialMode={unauthView}
-        onBackToHome={() => {
-          setUnauthView('landing');
-          window.scrollTo({ top: 0, behavior: 'auto' });
-        }}
-      />
+      <Suspense fallback={<WorkspaceLoadingScreen label="Loading VendorPilot AI..." />}>
+        {unauthView === 'landing' ? (
+          <LandingPage
+            onOpenAuth={(mode) => {
+              setUnauthView(mode);
+              window.scrollTo({ top: 0, behavior: 'auto' });
+            }}
+          />
+        ) : (
+          <AuthView
+            initialMode={unauthView}
+            onBackToHome={() => {
+              setUnauthView('landing');
+              window.scrollTo({ top: 0, behavior: 'auto' });
+            }}
+          />
+        )}
+      </Suspense>
     );
   }
 
   if (!emailVerified) {
-    return <EmailVerificationView />;
+    return (
+      <Suspense fallback={<WorkspaceLoadingScreen label="Loading verification..." />}>
+        <EmailVerificationView />
+      </Suspense>
+    );
   }
 
   if (profileLoading) {
@@ -97,7 +103,11 @@ function VendorPilotShell() {
   }
 
   if (!profileExists) {
-    return <OnboardingView />;
+    return (
+      <Suspense fallback={<WorkspaceLoadingScreen label="Loading setup..." />}>
+        <OnboardingView />
+      </Suspense>
+    );
   }
 
   const handleOpenRestock = (product: Product) => {
@@ -157,7 +167,7 @@ function VendorPilotShell() {
     state.products.length === 0;
 
   return (
-    <>
+    <Suspense fallback={<WorkspaceLoadingScreen label="Loading workspace..." />}>
       <WorkspaceWelcomeIntro
         userId={user.uid}
         ownerName={state.settings.ownerName || user.displayName || ''}
@@ -281,7 +291,7 @@ function VendorPilotShell() {
         )}
       </Modal>
     </Layout>
-    </>
+    </Suspense>
   );
 }
 
