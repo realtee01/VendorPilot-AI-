@@ -20,6 +20,7 @@ import {
   QuestionTopic,
 } from '../utils/localAssistantEngine';
 import { extractFirstName } from '../utils/avatars';
+import { AIAssistantIllustration } from './AIAssistantIllustration';
 
 interface AssistantThreadMessage extends ChatMessage {
   followUps?: string[];
@@ -526,7 +527,9 @@ export function AIAssistantView() {
         aria-label="Verified ledger context"
         className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 lg:col-span-4 lg:self-start"
       >
-        <div className="flex items-start justify-between gap-3">
+        <AIAssistantIllustration className="w-full" />
+
+        <div className="flex items-start justify-between gap-3 pt-1">
           <div>
             <h2 className="text-base font-semibold text-slate-900">Verified Ledger Context</h2>
             <p className="mt-0.5 text-xs text-slate-500">
