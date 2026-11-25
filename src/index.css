@@ -49,6 +49,18 @@
   }
 }
 
+@layer utilities {
+  .vp-gpu-accelerated {
+    transform: translateZ(0);
+    will-change: transform, opacity;
+  }
+
+  .vp-content-auto {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 500px;
+  }
+}
+
 /* Harmonized dark surface defaults for workspace, landing, auth, and modal views
    Specificity (0,1,1) inside @layer utilities: beats light utilities (0,1,0)
    while allowing any explicit dark:* Tailwind class (0,2,0) to override cleanly. */
