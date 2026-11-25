@@ -48,7 +48,7 @@ export function SettingsView() {
         defaultReorderLevel: Math.max(0, Number(form.defaultReorderLevel) || 0),
         vatRate: Math.max(0, Number(form.vatRate) || 0),
       });
-      setSavedNotice('Business profile and operational preferences saved to Cloud Firestore.');
+      setSavedNotice('Business profile and operational preferences saved.');
     } catch {
       setErrorNotice('Unable to save settings right now. Please try again.');
     } finally {
