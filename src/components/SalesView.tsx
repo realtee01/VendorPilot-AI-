@@ -114,6 +114,8 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
 
   const handleCustomerNameChange = (value: string) => {
     setCustomerName(value);
+    setFormErrors((prev) => (prev.customerName ? { ...prev, customerName: '' } : prev));
+    setSubmitError(null);
     const matched = state.customers.find(
       (c) => c.name.trim().toLowerCase() === value.trim().toLowerCase()
     );
@@ -195,7 +197,7 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
           date: date || getTodayIsoDate(),
           notes,
         });
-        setFeedback(`Updated order ${editingSale.orderNumber} in Cloud Firestore.`);
+        setFeedback(`Updated order ${editingSale.orderNumber}.`);
       } else {
         const created = await recordSale({
           draftSaleId,
@@ -212,13 +214,22 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
           notes,
         });
         setFeedback(
-          `Order ${created.orderNumber} saved to Firestore for ${created.customerName} (${formatNaira(created.totalAmount, false, symbol)}).`
+          `Order ${created.orderNumber} saved for ${created.customerName} (${formatNaira(created.totalAmount, false, symbol)}).`
         );
       }
 
       handleClose();
-    } catch {
-      setSubmitError('Unable to save sale right now. Please verify your inputs and try again.');
+    } catch (error) {
+      const rawMessage = error instanceof Error ? error.message.toLowerCase() : '';
+      if (rawMessage.includes('offline') || rawMessage.includes('unavailable') || rawMessage.includes('network')) {
+        setSubmitError('You appear to be offline. Check your internet connection and try saving again.');
+      } else if (rawMessage.includes('resource-exhausted') || rawMessage.includes('quota')) {
+        setSubmitError('Service quota limit reached temporarily. Please try again in a moment.');
+      } else if (rawMessage.includes('permission') || rawMessage.includes('unauthenticated')) {
+        setSubmitError('Your session needs to be refreshed. Please reload the page or sign in again.');
+      } else {
+        setSubmitError('Unable to save sale right now. Please verify your inputs and try again.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -465,7 +476,7 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
         subtitle={
           editingSale
             ? 'Updates the transaction and adjusts linked inventory by the exact quantity difference.'
-            : 'Saved atomically to Cloud Firestore with duplicate-safe inventory deduction.'
+            : 'Automatically updates your customer record and deducts linked inventory stock.'
         }
         maxWidthClass="max-w-xl"
       >
@@ -506,7 +517,11 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
                   type="text"
                   maxLength={160}
                   value={customProductName}
-                  onChange={(e) => setCustomProductName(e.target.value)}
+                  onChange={(e) => {
+                    setCustomProductName(e.target.value);
+                    setFormErrors((prev) => (prev.productName ? { ...prev, productName: '' } : prev));
+                    setSubmitError(null);
+                  }}
                   placeholder="e.g., Mama Gold Parboiled Rice (50kg)"
                   className="mt-1 h-10 w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
                 />
@@ -526,7 +541,11 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
                 min="1"
                 step="1"
                 value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
+                onChange={(e) => {
+                  setQuantity(e.target.value);
+                  setFormErrors((prev) => (prev.quantity ? { ...prev, quantity: '' } : prev));
+                  setSubmitError(null);
+                }}
                 className="mt-1 h-10 w-full rounded-lg border border-slate-200 px-3 font-mono text-sm text-slate-900 tabular-nums focus:border-emerald-600 focus:outline-none"
               />
               {formErrors.quantity && (
@@ -544,7 +563,11 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
                 min="1"
                 step="50"
                 value={unitPrice}
-                onChange={(e) => setUnitPrice(e.target.value)}
+                onChange={(e) => {
+                  setUnitPrice(e.target.value);
+                  setFormErrors((prev) => (prev.unitPrice ? { ...prev, unitPrice: '' } : prev));
+                  setSubmitError(null);
+                }}
                 className="mt-1 h-10 w-full rounded-lg border border-slate-200 px-3 font-mono text-sm text-slate-900 tabular-nums focus:border-emerald-600 focus:outline-none"
               />
               {formErrors.unitPrice && (
@@ -598,7 +621,11 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
               <select
                 id="sale-status"
                 value={paymentStatus}
-                onChange={(e) => setPaymentStatus(e.target.value as PaymentStatus)}
+                onChange={(e) => {
+                  setPaymentStatus(e.target.value as PaymentStatus);
+                  setFormErrors((prev) => (prev.amountPaid ? { ...prev, amountPaid: '' } : prev));
+                  setSubmitError(null);
+                }}
                 className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
               >
                 <option value="Paid">Paid (Full payment received)</option>
@@ -635,7 +662,11 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
                   type="number"
                   min="1"
                   value={amountPaid}
-                  onChange={(e) => setAmountPaid(e.target.value)}
+                  onChange={(e) => {
+                    setAmountPaid(e.target.value);
+                    setFormErrors((prev) => (prev.amountPaid ? { ...prev, amountPaid: '' } : prev));
+                    setSubmitError(null);
+                  }}
                   placeholder="Enter deposit received"
                   className="mt-1 h-10 w-full rounded-lg border border-slate-200 px-3 font-mono text-sm text-slate-900 tabular-nums focus:border-emerald-600 focus:outline-none"
                 />
@@ -653,7 +684,11 @@ export function SalesView({ isModalOpen, onOpenModal, onCloseModal }: SalesViewP
                 id="sale-date"
                 type="date"
                 value={date}
-                onChange={(e) => setDate(e.target.value)}
+                onChange={(e) => {
+                  setDate(e.target.value);
+                  setFormErrors((prev) => (prev.date ? { ...prev, date: '' } : prev));
+                  setSubmitError(null);
+                }}
                 className="mt-1 h-10 w-full rounded-lg border border-slate-200 px-3 font-mono text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
               />
               {formErrors.date && <p className="mt-1 text-xs text-rose-600">{formErrors.date}</p>}

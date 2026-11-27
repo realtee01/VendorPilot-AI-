@@ -667,15 +667,23 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     if (!user) throw new Error('Authentication required.');
 
     const saleId = payload.draftSaleId || generateDocumentId('sale');
+    const existingInState = sales.find((s) => s.id === saleId);
+    if (existingInState) {
+      return existingInState;
+    }
+
+    const safeQuantity = Math.max(1, Math.round(payload.quantity));
+    const safeUnitPrice = Math.round(payload.unitPrice * 100) / 100;
     const orderNumber = generateNextOrderNumber(sales);
     const { totalAmount, amountPaid } = normalizeSaleAmounts(
-      payload.quantity,
-      payload.unitPrice,
+      safeQuantity,
+      safeUnitPrice,
       payload.paymentStatus,
       payload.amountPaid
     );
 
     const safeProductId = payload.productId ? sanitizeText(payload.productId, BLUEPRINT_LIMITS.idMax) : '';
+    const hasLinkedProduct = Boolean(safeProductId && products.some((p) => p.id === safeProductId));
     const safeCustomerName = sanitizeText(payload.customerName, BLUEPRINT_LIMITS.customerMax);
     const safeCustomerPhone = sanitizeText(payload.customerPhone || '', BLUEPRINT_LIMITS.phoneMax);
     const matchedCustomer = customers.find(
@@ -689,36 +697,31 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
 
       await runTransaction(db, async (tx) => {
         const saleRef = doc(db, 'sales', saleId);
-        const existingSaleSnap = await tx.get(saleRef);
 
-        // Idempotency guard: prevent accidental duplicate creation or double stock deduction
-        if (existingSaleSnap.exists()) {
-          const prevData = existingSaleSnap.data();
-          finalDeductedQty = Number(prevData.stockDeductedQty ?? 0);
-          return;
-        }
-
-        const productRef = safeProductId ? doc(db, 'products', safeProductId) : null;
+        // Only read documents that are expected to exist before performing writes
+        const productRef = hasLinkedProduct ? doc(db, 'products', safeProductId) : null;
         const productSnap = productRef ? await tx.get(productRef) : null;
 
         const customerRef = doc(db, 'customers', customerId);
-        const customerSnap = await tx.get(customerRef);
+        const customerSnap = matchedCustomer ? await tx.get(customerRef) : null;
 
         // Deduct stock safely inside transaction
         if (productRef && productSnap && productSnap.exists()) {
           const prodData = productSnap.data();
           if (prodData.userId === user.uid) {
             const currentStock = Math.max(0, Number(prodData.quantity ?? 0));
-            finalDeductedQty = Math.min(currentStock, Math.round(payload.quantity));
-            tx.update(productRef, {
-              quantity: Math.max(0, currentStock - finalDeductedQty),
-              updatedAt: serverTimestamp(),
-            });
+            finalDeductedQty = Math.min(currentStock, safeQuantity);
+            if (finalDeductedQty > 0) {
+              tx.update(productRef, {
+                quantity: Math.max(0, currentStock - finalDeductedQty),
+                updatedAt: serverTimestamp(),
+              });
+            }
           }
         }
 
         // Upsert customer record inside transaction
-        if (customerSnap.exists()) {
+        if (customerSnap && customerSnap.exists()) {
           const prevCust = customerSnap.data();
           if (prevCust.userId === user.uid) {
             tx.update(customerRef, {
@@ -752,10 +755,10 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
           orderNumber: sanitizeText(orderNumber, BLUEPRINT_LIMITS.orderNumberMax),
           userId: user.uid,
           businessId: user.uid,
-          productId: safeProductId,
+          productId: hasLinkedProduct ? safeProductId : '',
           product: sanitizeText(payload.productName, BLUEPRINT_LIMITS.productNameMax),
-          quantity: payload.quantity,
-          unitPrice: payload.unitPrice,
+          quantity: safeQuantity,
+          unitPrice: safeUnitPrice,
           totalAmount,
           amountPaid,
           customerId,
@@ -777,10 +780,10 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
         userId: user.uid,
         businessId: user.uid,
         date: payload.date,
-        productId: safeProductId || null,
+        productId: hasLinkedProduct ? safeProductId : null,
         productName: sanitizeText(payload.productName, BLUEPRINT_LIMITS.productNameMax),
-        quantity: payload.quantity,
-        unitPrice: payload.unitPrice,
+        quantity: safeQuantity,
+        unitPrice: safeUnitPrice,
         totalAmount,
         amountPaid,
         customerId,
@@ -799,9 +802,11 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
   const updateSale = async (saleId: string, payload: SaleFormPayload): Promise<void> => {
     if (!user) throw new Error('Authentication required.');
     const salePath = `sales/${saleId}`;
+    const safeQuantity = Math.max(1, Math.round(payload.quantity));
+    const safeUnitPrice = Math.round(payload.unitPrice * 100) / 100;
     const { totalAmount, amountPaid } = normalizeSaleAmounts(
-      payload.quantity,
-      payload.unitPrice,
+      safeQuantity,
+      safeUnitPrice,
       payload.paymentStatus,
       payload.amountPaid
     );
@@ -824,9 +829,13 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
         const prevProductId = existingSale.productId ? String(existingSale.productId) : null;
         const prevDeductedQty = Number(existingSale.stockDeductedQty ?? 0);
 
-        // Read all affected products before writing
+        // Read all existing affected products before writing
         const productIdsToRead = Array.from(
-          new Set([prevProductId, nextProductId || null].filter((id): id is string => Boolean(id)))
+          new Set(
+            [prevProductId, nextProductId || null].filter(
+              (id): id is string => Boolean(id) && products.some((p) => p.id === id)
+            )
+          )
         );
         const currentStockByProductId: Record<string, number> = {};
         for (const pid of productIdsToRead) {
@@ -840,7 +849,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
           previousProductId: prevProductId,
           previousDeductedQty: prevDeductedQty,
           nextProductId: nextProductId || null,
-          nextQuantity: payload.quantity,
+          nextQuantity: safeQuantity,
           currentStockByProductId,
         });
 
@@ -854,8 +863,8 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
         tx.update(saleRef, {
           productId: nextProductId,
           product: sanitizeText(payload.productName, BLUEPRINT_LIMITS.productNameMax),
-          quantity: payload.quantity,
-          unitPrice: payload.unitPrice,
+          quantity: safeQuantity,
+          unitPrice: safeUnitPrice,
           totalAmount,
           amountPaid,
           customerId: existingSale.customerId ? String(existingSale.customerId) : '',
@@ -907,7 +916,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
         const linkedProductId = data.productId ? String(data.productId) : null;
         const deductedQty = Math.max(0, Number(data.stockDeductedQty ?? 0));
 
-        if (linkedProductId && deductedQty > 0) {
+        if (linkedProductId && deductedQty > 0 && products.some((p) => p.id === linkedProductId)) {
           const prodRef = doc(db, 'products', linkedProductId);
           const prodSnap = await tx.get(prodRef);
           if (prodSnap.exists() && prodSnap.data().userId === user.uid) {

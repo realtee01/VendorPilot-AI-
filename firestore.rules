@@ -340,7 +340,7 @@ service cloud.firestore {
 
     // 3. Sales (Tenant-scoped with action-based updates: Mark Paid or Owner Edit)
     match /sales/{saleId} {
-      allow get: if isSignedIn() && isValidId(saleId) && existing().userId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(saleId) && (resource == null || existing().userId == request.auth.uid);
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
 
       allow create: if isVerifiedUser() &&
@@ -383,7 +383,7 @@ service cloud.firestore {
 
     // 4. Expenses (Tenant-scoped with owner create, edit, and delete)
     match /expenses/{expenseId} {
-      allow get: if isSignedIn() && isValidId(expenseId) && existing().userId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(expenseId) && (resource == null || existing().userId == request.auth.uid);
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
 
       allow create: if isVerifiedUser() &&
@@ -413,7 +413,7 @@ service cloud.firestore {
 
     // 5. Products (Tenant-scoped inventory catalogue with action-based updates)
     match /products/{productId} {
-      allow get: if isSignedIn() && isValidId(productId) && existing().userId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(productId) && (resource == null || existing().userId == request.auth.uid);
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
 
       allow create: if isVerifiedUser() &&
@@ -448,7 +448,7 @@ service cloud.firestore {
 
     // 6. Customers (Tenant-scoped customer directory)
     match /customers/{customerId} {
-      allow get: if isSignedIn() && isValidId(customerId) && existing().userId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(customerId) && (resource == null || existing().userId == request.auth.uid);
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
 
       allow create: if isVerifiedUser() &&
