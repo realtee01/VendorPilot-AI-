@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyNewSaleToInventory,
+  buildRevenueGrowthSeries,
   buildSalesPerformanceSeries,
   calculateDashboardMetrics,
   computeSaleStockDelta,
@@ -374,4 +375,35 @@ test('buildSalesPerformanceSeries single-pass buckets sum exact revenue and expe
   assert.equal(series6m.reduce((sum, p) => sum + p.revenue, 0), 674500);
   assert.equal(series6m.reduce((sum, p) => sum + p.expenses, 0), 325000);
 });
+
+test('buildRevenueGrowthSeries computes cumulative revenue, peak bucket, and period-over-period growth', () => {
+  const priorSale: SaleOrder = {
+    ...FIXTURE_SALES[0],
+    id: 'sale-prior',
+    orderNumber: 'VP-0999',
+    date: '2026-11-15',
+    totalAmount: 337250,
+    amountPaid: 337250,
+  };
+
+  const growth7d = buildRevenueGrowthSeries(
+    [...FIXTURE_SALES, priorSale],
+    FIXTURE_EXPENSES,
+    '7d',
+    '2026-11-24'
+  );
+
+  assert.equal(growth7d.hasRevenue, true);
+  assert.equal(growth7d.totalRevenue, 674500);
+  assert.equal(growth7d.previousPeriodRevenue, 337250);
+  assert.equal(growth7d.growthRatePct, 100);
+  assert.equal(growth7d.peakRevenue, 422500);
+  assert.equal(growth7d.points[growth7d.points.length - 1].cumulativeRevenue, 674500);
+
+  const emptyGrowth = buildRevenueGrowthSeries([], [], '30d', '2026-11-24');
+  assert.equal(emptyGrowth.hasRevenue, false);
+  assert.equal(emptyGrowth.growthRatePct, null);
+  assert.equal(emptyGrowth.totalRevenue, 0);
+});
+
 

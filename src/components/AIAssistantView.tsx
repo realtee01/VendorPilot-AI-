@@ -4,7 +4,6 @@ import {
   RotateCcw,
   CalendarDays,
   FileBarChart2,
-  Sparkles,
   MessageSquareText,
   Lightbulb,
 } from 'lucide-react';
@@ -21,6 +20,7 @@ import {
 } from '../utils/localAssistantEngine';
 import { extractFirstName } from '../utils/avatars';
 import { AIAssistantIllustration } from './AIAssistantIllustration';
+import { VendorAvatar } from './VendorAvatar';
 
 interface AssistantThreadMessage extends ChatMessage {
   followUps?: string[];
@@ -279,7 +279,13 @@ export function AIAssistantView() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-4">
           <div>
             <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
-              <Sparkles className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+              <VendorAvatar
+                seed="VendorPilotAI"
+                alt="VendorPilot AI Advisor"
+                initials="AI"
+                size={24}
+                className="h-6 w-6 rounded-lg ring-1 ring-emerald-200 dark:ring-emerald-800"
+              />
               <span>Business Performance Advisor</span>
             </h2>
             <p className="text-xs text-slate-500">

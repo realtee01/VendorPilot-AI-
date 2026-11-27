@@ -11,7 +11,6 @@ import {
   Package,
   Receipt,
   ShoppingBag,
-  Sparkles,
   Store,
   User,
 } from 'lucide-react';
@@ -914,7 +913,14 @@ export function OnboardingView({
                         className="inline-flex h-11 items-center gap-2 rounded-xl bg-emerald-600 px-6 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
                       >
                         <span>{submitting ? 'Setting up...' : 'Finish Setup'}</span>
-                        <Sparkles className="h-4 w-4" aria-hidden="true" />
+                        <VendorAvatar
+                          seed={seed}
+                          src={avatarUrl}
+                          alt=""
+                          initials={initials}
+                          size={20}
+                          className="h-5 w-5 rounded-full ring-1 ring-white/50"
+                        />
                       </button>
                     </div>
                   </div>
@@ -930,8 +936,17 @@ export function OnboardingView({
                   transition={{ duration: 0.28, ease: STEP_EASE }}
                   className="rounded-3xl border border-slate-200 bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-900 sm:p-11"
                 >
-                  <div className="mx-auto mb-5 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 ring-4 ring-emerald-50/80 dark:bg-emerald-950/60 dark:text-emerald-400 dark:ring-emerald-950/40">
-                    <Sparkles className="h-8 w-8" aria-hidden="true" />
+                  <div className="mx-auto mb-5 inline-flex rounded-2xl bg-emerald-50/90 p-2.5 ring-1 ring-emerald-200/70 dark:bg-emerald-950/50 dark:ring-emerald-900/60">
+                    <VendorAvatar
+                      seed={seed}
+                      src={avatarUrl}
+                      alt={`${fullName} (${initials})`}
+                      initials={initials}
+                      size={68}
+                      showInitialsBadge
+                      badgeSize="md"
+                      className="h-16 w-16 rounded-xl"
+                    />
                   </div>
 
                   <h1 className="font-editorial text-3xl leading-tight font-bold tracking-normal text-slate-900 dark:text-white sm:text-4xl">

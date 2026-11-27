@@ -330,6 +330,126 @@ export function buildSalesPerformanceSeries(
   return months;
 }
 
+export interface RevenueGrowthPoint {
+  label: string;
+  revenue: number;
+  cumulativeRevenue: number;
+  expenses: number;
+  profit: number;
+  growthPct: number | null;
+}
+
+export interface RevenueGrowthSummary {
+  points: RevenueGrowthPoint[];
+  totalRevenue: number;
+  previousPeriodRevenue: number;
+  growthRatePct: number | null;
+  peakLabel: string;
+  peakRevenue: number;
+  averageBucketRevenue: number;
+  hasRevenue: boolean;
+}
+
+export function buildRevenueGrowthSeries(
+  sales: SaleOrder[],
+  expenses: Expense[],
+  range: SalesRange,
+  anchorIsoDate = new Date().toISOString().slice(0, 10)
+): RevenueGrowthSummary {
+  const baseSeries = buildSalesPerformanceSeries(sales, expenses, range, anchorIsoDate);
+  const anchor = parseUtcDate(anchorIsoDate);
+
+  // Compute immediately preceding window of equal length for honest period-over-period growth
+  let previousPeriodRevenue = 0;
+  if (range === '7d') {
+    const prevEnd = new Date(anchor.getTime() - 7 * 86_400_000);
+    const prevStart = new Date(anchor.getTime() - 13 * 86_400_000);
+    const prevStartIso = toIsoDate(prevStart);
+    const prevEndIso = toIsoDate(prevEnd);
+    for (const s of sales) {
+      if (s.date >= prevStartIso && s.date <= prevEndIso) {
+        previousPeriodRevenue += s.totalAmount;
+      }
+    }
+  } else if (range === '30d') {
+    const prevEnd = new Date(anchor.getTime() - 30 * 86_400_000);
+    const prevStart = new Date(anchor.getTime() - 59 * 86_400_000);
+    const prevStartIso = toIsoDate(prevStart);
+    const prevEndIso = toIsoDate(prevEnd);
+    for (const s of sales) {
+      if (s.date >= prevStartIso && s.date <= prevEndIso) {
+        previousPeriodRevenue += s.totalAmount;
+      }
+    }
+  } else {
+    // 6m: compare current 6-month window against prior 6 months
+    const prevMonths = new Set<string>();
+    for (let i = 11; i >= 6; i--) {
+      const d = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - i, 1));
+      prevMonths.add(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
+    }
+    for (const s of sales) {
+      if (prevMonths.has(s.date.slice(0, 7))) {
+        previousPeriodRevenue += s.totalAmount;
+      }
+    }
+  }
+
+  let runningTotal = 0;
+  let peakRevenue = 0;
+  let peakLabel = baseSeries[0]?.label ?? '';
+
+  const points: RevenueGrowthPoint[] = baseSeries.map((pt, idx) => {
+    runningTotal += pt.revenue;
+    if (pt.revenue >= peakRevenue && pt.revenue > 0) {
+      peakRevenue = pt.revenue;
+      peakLabel = pt.label;
+    }
+
+    let growthPct: number | null = null;
+    if (idx > 0) {
+      const prevRev = baseSeries[idx - 1].revenue;
+      if (prevRev > 0) {
+        growthPct = Number((((pt.revenue - prevRev) / prevRev) * 100).toFixed(1));
+      } else if (pt.revenue > 0) {
+        growthPct = 100;
+      }
+    }
+
+    return {
+      label: pt.label,
+      revenue: pt.revenue,
+      cumulativeRevenue: runningTotal,
+      expenses: pt.expenses,
+      profit: pt.profit,
+      growthPct,
+    };
+  });
+
+  const totalRevenue = runningTotal;
+  let growthRatePct: number | null = null;
+  if (previousPeriodRevenue > 0) {
+    growthRatePct = Number(
+      (((totalRevenue - previousPeriodRevenue) / previousPeriodRevenue) * 100).toFixed(1)
+    );
+  } else if (totalRevenue > 0) {
+    growthRatePct = 100;
+  }
+
+  const averageBucketRevenue = points.length > 0 ? totalRevenue / points.length : 0;
+
+  return {
+    points,
+    totalRevenue,
+    previousPeriodRevenue,
+    growthRatePct,
+    peakLabel: peakRevenue > 0 ? peakLabel : 'No peak yet',
+    peakRevenue,
+    averageBucketRevenue,
+    hasRevenue: totalRevenue > 0,
+  };
+}
+
 export function applyNewSaleToInventory(
   products: Product[],
   productId: string | null,
